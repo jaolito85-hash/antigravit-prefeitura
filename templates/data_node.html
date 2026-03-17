@@ -2045,10 +2045,13 @@
                 // Parse thread — usa conversa completa para preview e indicadores
                 const thread = parseConversationEntries(e);
                 const updateCount = thread.length > 1 ? thread.length - 1 : 0;
-                // Mostra a última mensagem do cidadão no card
                 const clientMsgs = thread.filter(t => t.role !== 'agent');
-                const lastClientMsg = clientMsgs[clientMsgs.length - 1];
-                const firstMsg = lastClientMsg ? lastClientMsg.text : (thread[0]?.text || e.message || '');
+                // Card novo / poucas trocas (≤2 msgs do cidadão): mostra a primeira mensagem (a reclamação original)
+                // Card em andamento com muitas trocas (≥3 msgs): mostra a última para refletir o estado atual
+                const previewMsg = clientMsgs.length >= 3
+                    ? clientMsgs[clientMsgs.length - 1]
+                    : clientMsgs[0];
+                const firstMsg = previewMsg ? previewMsg.text : (thread[0]?.text || e.message || '');
                 // Indicador de nova mensagem: última entrada da conversa é do cidadão (não foi respondida)
                 const lastEntry = thread[thread.length - 1];
                 const hasNewMsg = lastEntry && lastEntry.role !== 'agent' && thread.length > 1;
@@ -2299,9 +2302,12 @@
 
                         const conversation = parseConversationEntries(e);
                         const clientMessages = conversation.filter(item => item.role !== 'agent');
-                        // Mostra a última mensagem do cidadão no card (não a primeira)
-                        const lastClientMsg2 = clientMessages[clientMessages.length - 1];
-                        const firstMsg = lastClientMsg2?.text || e.message || '';
+                        // Card novo / poucas trocas (≤2 msgs do cidadão): mostra a primeira mensagem (a reclamação original)
+                        // Card em andamento com muitas trocas (≥3 msgs): mostra a última para refletir o estado atual
+                        const previewMsg2 = clientMessages.length >= 3
+                            ? clientMessages[clientMessages.length - 1]
+                            : clientMessages[0];
+                        const firstMsg = previewMsg2?.text || e.message || '';
                         // Indicador de nova mensagem não respondida
                         const lastEntry2 = conversation[conversation.length - 1];
                         const hasNewMsg2 = lastEntry2 && lastEntry2.role !== 'agent' && conversation.length > 1;
