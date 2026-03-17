@@ -1879,17 +1879,35 @@ def webhook():
                         try:
                             from openai import OpenAI
                             client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-                            urgency_note = 'A prioridade do chamado foi elevada.' if update_urgency in ['Critico', 'Urgente'] else ''
-                            # Injeta lembrete de endereço se ainda está faltando e não foi fornecido agora
+
+                            # Tom baseado na urgência detectada
+                            if sentimento in ['Critico', 'Crítico']:
+                                urgency_context = 'A situação descrita é CRÍTICA. Expresse indignação genuína e solidariedade. Diga que a situação foi registrada como urgente e que a equipe será acionada imediatamente.'
+                            elif sentimento == 'Urgente':
+                                urgency_context = 'A situação é urgente. Mostre que entende a gravidade e que a equipe responsável será notificada com prioridade.'
+                            elif sentimento == 'Positivo':
+                                urgency_context = 'O cidadão enviou um elogio ou mensagem positiva. Agradeça de coração, de forma calorosa.'
+                            else:
+                                urgency_context = 'Tom acolhedor. Mostre que você ouviu e que a informação foi anotada.'
+
+                            # Lembrete de endereço se ainda falta
                             missing_address_note = ''
                             if current_loc_status != 'completo' and not new_thread_rua and categoria not in LOCATION_OPTIONAL_CATEGORIES:
-                                missing_address_note = '\nATENÇÃO: este chamado ainda não tem endereço completo. Se a mensagem não informar rua e bairro específicos, pergunte de forma natural e breve ao final da resposta.'
-                            reply_prompt = f"""Você é a Clara, atendente da Prefeitura de Ivaté - PR.
-O cidadão já tem um chamado aberto. Ele enviou uma nova mensagem adicional.
-MENSAGEM: "{text}"
-{urgency_note}{missing_address_note}
-Escreva UMA resposta amigável e curta (máx. 3 frases) confirmando que a informação foi adicionada ao chamado.
-Tom: próximo, humano, sem burocracia."""
+                                missing_address_note = '\nSe a mensagem não trouxer rua ou bairro, pergunte de forma natural e breve ao final — apenas uma vez.'
+
+                            reply_prompt = f"""Você é a Clara, atendente da Prefeitura de Ivaté - PR, e se importa de verdade com os cidadãos.
+O cidadão já tem um chamado aberto e enviou uma nova mensagem.
+
+MENSAGEM DO CIDADÃO: "{text}"
+CATEGORIA: {categoria} | URGÊNCIA: {sentimento}
+{urgency_context}{missing_address_note}
+
+REGRAS ABSOLUTAS:
+- MÁXIMO 3 frases curtas.
+- Reaja ao CONTEÚDO com empatia real — não diga apenas "informação registrada".
+- Se o cidadão expressar frustração, valide-a com frases como "Isso é inaceitável", "Entendo sua indignação", "Você tem razão em estar insatisfeito".
+- NÃO use linguagem burocrática. NÃO diga "protocolo" nessa mensagem.
+- Tom: humano, próximo, como alguém que genuinamente se importa."""
                             resp = client.chat.completions.create(
                                 model="gpt-4o-mini",
                                 messages=[{"role": "system", "content": reply_prompt}],

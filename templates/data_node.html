@@ -244,6 +244,16 @@
             box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
         }
 
+        .new-msg-card {
+            border-color: #ef444466 !important;
+            box-shadow: 0 0 0 2px #ef444422;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(0.93); }
+        }
+
         .fb-header {
             display: flex;
             justify-content: space-between;
@@ -1880,35 +1890,46 @@
         }
 
 
-        // Função para converter timestamp em tempo relativo
-        // Função para converter timestamp em tempo relativo
-        function formatarTempo(timestamp) {
-            if (!timestamp) return 'Desconhecido';
-
-            let data;
-            // Hack para suportar formato antigo "DD/MM/YY HH:MM"
+        // Converte ISO UTC para Date — força UTC se não tiver timezone explícito
+        function parseTsUTC(timestamp) {
+            if (!timestamp) return null;
             if (timestamp.indexOf('/') > -1) {
                 const [datePart, timePart] = timestamp.split(' ');
                 const [dia, mes, ano] = datePart.split('/');
                 const [hora, minuto] = timePart.split(':');
-                data = new Date(`20${ano}-${mes}-${dia}T${hora}:${minuto}:00`);
-            } else {
-                // Formato ISO UTC (Supabase)
-                data = new Date(timestamp);
+                return new Date(`20${ano}-${mes}-${dia}T${hora}:${minuto}:00Z`);
             }
+            // Adiciona Z se não tiver offset — evita parseamento como horário local
+            const ts = /[Z+]/.test(timestamp.slice(10)) ? timestamp : timestamp + 'Z';
+            return new Date(ts);
+        }
 
+        // Tempo relativo para cabeçalhos de card (ex: "Há 5 min", "Há 2h")
+        function formatarTempo(timestamp) {
+            if (!timestamp) return 'Desconhecido';
+            const data = parseTsUTC(timestamp);
+            if (!data || isNaN(data)) return 'Desconhecido';
             const agora = new Date();
-            const diffMs = agora - data;
-            const diffMin = Math.floor(diffMs / 60000);
+            const diffMin = Math.floor((agora - data) / 60000);
             const diffHoras = Math.floor(diffMin / 60);
-
             if (diffMin < 1) return 'Agora mesmo';
             if (diffMin < 60) return `Há ${diffMin} min`;
             if (diffHoras < 24) return `Há ${diffHoras}h`;
-
-            // Converter para Brasília (UTC-3)
             const opcoes = { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' };
             return data.toLocaleString('pt-BR', opcoes);
+        }
+
+        // Horário exato para bolhas de conversa — HH:MM (hoje) ou DD/MM HH:MM (outro dia)
+        function formatarHoraMensagem(timestamp) {
+            if (!timestamp) return '';
+            const data = parseTsUTC(timestamp);
+            if (!data || isNaN(data)) return '';
+            const tz = 'America/Sao_Paulo';
+            const agora = new Date();
+            const hojeStr = agora.toLocaleDateString('pt-BR', { timeZone: tz });
+            const msgStr  = data.toLocaleDateString('pt-BR', { timeZone: tz });
+            const hora = data.toLocaleTimeString('pt-BR', { timeZone: tz, hour: '2-digit', minute: '2-digit' });
+            return hojeStr === msgStr ? hora : `${msgStr.slice(0,5)} ${hora}`;
         }
 
         // Parse flat message string into thread array
@@ -2021,10 +2042,19 @@
                         </div>
                     </div>`;
 
-                // Parse thread
-                const thread = parseThread(e.message);
-                const updateCount = thread.length - 1;
-                const firstMsg = thread[0].text;
+                // Parse thread — usa conversa completa para preview e indicadores
+                const thread = parseConversationEntries(e);
+                const updateCount = thread.length > 1 ? thread.length - 1 : 0;
+                // Mostra a última mensagem do cidadão no card
+                const clientMsgs = thread.filter(t => t.role !== 'agent');
+                const lastClientMsg = clientMsgs[clientMsgs.length - 1];
+                const firstMsg = lastClientMsg ? lastClientMsg.text : (thread[0]?.text || e.message || '');
+                // Indicador de nova mensagem: última entrada da conversa é do cidadão (não foi respondida)
+                const lastEntry = thread[thread.length - 1];
+                const hasNewMsg = lastEntry && lastEntry.role !== 'agent' && thread.length > 1;
+                const newMsgBadge = hasNewMsg
+                    ? `<span style="display:inline-flex;align-items:center;gap:3px;background:#ef444420;color:#ef4444;border:1px solid #ef444455;font-size:0.62rem;font-weight:700;padding:2px 7px;border-radius:4px;animation:pulse 1.5s infinite;" title="Nova mensagem do cidadão"><i class="ri-message-3-line"></i> NOVA</span>`
+                    : '';
                 const updateBadge = updateCount > 0
                     ? `<div class="update-badge"><i class="ri-chat-3-line"></i> ${updateCount} atualiza${updateCount === 1 ? 'ção' : 'ções'}</div>`
                     : '';
@@ -2062,9 +2092,9 @@
                     ? `<span title="Endereço não informado" style="display:inline-flex;align-items:center;gap:2px;background:#f59e0b18;color:#f59e0b;border:1px solid #f59e0b55;font-size:0.62rem;font-weight:700;padding:2px 6px;border-radius:4px;margin-left:4px;"><i class="ri-map-pin-2-line"></i> SEM ENDEREÇO</span>`
                     : '';
                 container.innerHTML += `
-                    <div class="feedback-card clickable" onclick="openThreadModal(${e.id})" data-id="${e.id}">
+                    <div class="feedback-card clickable${hasNewMsg ? ' new-msg-card' : ''}" onclick="openThreadModal(${e.id})" data-id="${e.id}">
                         <div class="fb-header">
-                            <div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;"><span class="fb-tag" style="background:${urgencyColor}20; color:${urgencyColor}; border:1px solid ${urgencyColor}">${e.category}</span>${_locBadge1}</div>
+                            <div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;"><span class="fb-tag" style="background:${urgencyColor}20; color:${urgencyColor}; border:1px solid ${urgencyColor}">${e.category}</span>${_locBadge1}${newMsgBadge}</div>
                             <div class="fb-time" title="${e.timestamp}"><i class="ri-time-line"></i> ${formatarTempo(e.timestamp)}</div>
                         </div>
                         ${mediaThumb}
@@ -2269,7 +2299,15 @@
 
                         const conversation = parseConversationEntries(e);
                         const clientMessages = conversation.filter(item => item.role !== 'agent');
-                        const firstMsg = clientMessages[0]?.text || e.message || '';
+                        // Mostra a última mensagem do cidadão no card (não a primeira)
+                        const lastClientMsg2 = clientMessages[clientMessages.length - 1];
+                        const firstMsg = lastClientMsg2?.text || e.message || '';
+                        // Indicador de nova mensagem não respondida
+                        const lastEntry2 = conversation[conversation.length - 1];
+                        const hasNewMsg2 = lastEntry2 && lastEntry2.role !== 'agent' && conversation.length > 1;
+                        const newMsgBadge2 = hasNewMsg2
+                            ? `<span style="display:inline-flex;align-items:center;gap:3px;background:#ef444420;color:#ef4444;border:1px solid #ef444455;font-size:0.62rem;font-weight:700;padding:2px 7px;border-radius:4px;animation:pulse 1.5s infinite;" title="Nova mensagem do cidadão"><i class="ri-message-3-line"></i> NOVA</span>`
+                            : '';
 
                         const statusDropdownHtml = `
                             <div class="status-dropdown" style="position:relative;">
@@ -2316,9 +2354,9 @@
                             ? `<span title="Endereço não informado" style="display:inline-flex;align-items:center;gap:2px;background:#f59e0b18;color:#f59e0b;border:1px solid #f59e0b55;font-size:0.62rem;font-weight:700;padding:2px 6px;border-radius:4px;margin-left:4px;"><i class="ri-map-pin-2-line"></i> SEM ENDEREÇO</span>`
                             : '';
                         container.innerHTML += `
-                            <div class="feedback-card clickable" onclick="openThreadModal(${e.id})" data-id="${e.id}">
+                            <div class="feedback-card clickable${hasNewMsg2 ? ' new-msg-card' : ''}" onclick="openThreadModal(${e.id})" data-id="${e.id}">
                                 <div class="fb-header">
-                                    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;"><span class="fb-tag" style="background:${urgencyColor}20; color:${urgencyColor}; border:1px solid ${urgencyColor}">${e.category}</span>${_locBadge2}</div>
+                                    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;"><span class="fb-tag" style="background:${urgencyColor}20; color:${urgencyColor}; border:1px solid ${urgencyColor}">${e.category}</span>${_locBadge2}${newMsgBadge2}</div>
                                     <div class="fb-time" title="${e.timestamp}"><i class="ri-time-line"></i> ${formatarTempo(e.timestamp)}</div>
                                 </div>
                                 ${mediaThumb}
@@ -2408,7 +2446,7 @@
             const timelineHtml = conversation.map(item => {
                 const isAgent = item.role === 'agent';
                 const roleLabel = isAgent ? 'Clara' : 'Cidadão';
-                const timeLabel = item.timestamp ? formatarTempo(item.timestamp) : 'Agora';
+                const timeLabel = item.timestamp ? formatarHoraMensagem(item.timestamp) : '';
                 return `
                     <div class="thread-item ${isAgent ? 'agent' : 'client'}">
                         <div class="chat-bubble">
