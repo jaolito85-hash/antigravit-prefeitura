@@ -438,6 +438,12 @@ def is_waiting_for_location(raw_message):
         'me informar o bairro',
         'qual endereço',
         'qual o endereço',
+        'informar a rua',       # cobre "me informar também a rua"
+        'informar o bairro',    # cobre "me informar também o bairro"
+        'tambem a rua',         # cobre "poderia me informar também a rua"
+        'tambem o bairro',
+        'nome do bairro',
+        'nome do conjunto',
     )
     return any(prompt in last_agent for prompt in location_prompts)
 
@@ -475,6 +481,28 @@ def is_vague_location(text: str) -> bool:
     """Retorna True se o texto menciona local de forma vaga/possessiva (não é endereço real)."""
     normalized = normalize_text(text)
     return any(re.search(p, normalized) for p in VAGUE_LOCATION_PATTERNS)
+
+LOCATION_DECLINE_PATTERNS = [
+    r'\bnao sei\b', r'\bnão sei\b',
+    r'\bnao lembro\b', r'\bnão lembro\b',
+    r'\bnem sei\b',
+    r'\bsem endere[cç]o\b',
+    r'\bnao tenho endere[cç]o\b',
+    r'\bnão tenho endere[cç]o\b',
+    r'\bnao sei o endere[cç]o\b',
+    r'\bnao sei a rua\b',
+    r'\bnão sei a rua\b',
+    r'\bnao sei o bairro\b',
+    r'\bnão sei o bairro\b',
+    r'\bnao sei onde\b',
+    r'\bnão sei onde\b',
+    r'\bdesconhe[cç]o\b',
+]
+
+def is_location_decline(text: str) -> bool:
+    """Retorna True se o cidadão indicou que não sabe o endereço."""
+    normalized = normalize_text(text)
+    return any(re.search(p, normalized) for p in LOCATION_DECLINE_PATTERNS)
 
 def extract_street_from_text(text: str):
     """Extrai nome de rua ou avenida do texto do cidadão. Retorna string ou None."""
@@ -1730,11 +1758,30 @@ def webhook():
                 if active_feedback:
                     waiting_for_location = is_waiting_for_location(active_feedback.get('message', ''))
                     if waiting_for_location:
+                        current_region = active_feedback.get('region', 'N/A')
+
+                        # Cidadão disse que não sabe o endereço — aceita e finaliza sem pressionar
+                        if is_location_decline(text):
+                            # Se já tem ao menos região/bairro, considera suficiente
+                            if current_region and current_region != 'N/A':
+                                reply = "Tudo bem! Já temos o bairro registrado. Sua reclamação está anotada e a equipe irá analisar."
+                            else:
+                                reply = "Tudo bem, sem problema! Sua reclamação já está registrada e nossa equipe irá analisar assim que possível."
+                            append_to_feedback(
+                                active_feedback['id'],
+                                active_feedback['message'],
+                                text,
+                                new_location_status='completo',
+                            )
+                            send_whatsapp_message(remote_jid, reply)
+                            current_message = append_conversation_entry(active_feedback['message'], 'client', text)
+                            record_agent_reply(active_feedback['id'], current_message, reply)
+                            return jsonify({"status": "location_declined_accepted"}), 200
+
                         has_street, has_neighborhood, detected_region = detect_location_components(text)
                         _is_vague = is_vague_location(text)
                         # Só aceita rua/bairro se não for referência vaga
                         effective_has_street = has_street and not _is_vague
-                        current_region = active_feedback.get('region', 'N/A')
                         update_region = None
                         if current_region and current_region != 'N/A':
                             has_neighborhood = True
@@ -1742,6 +1789,25 @@ def webhook():
                             update_region = detected_region
                         effective_region = update_region or current_region
                         effective_has_hood = has_neighborhood or (effective_region and effective_region != 'N/A')
+
+                        # Se já tem bairro/região, aceita mesmo sem a rua — não fica insistindo
+                        if effective_has_hood and not effective_has_street:
+                            extracted_rua = None
+                            new_loc_status = 'completo'
+                            reply = "Obrigado! Já registrei o bairro. Sua reclamação está anotada e a equipe responsável irá verificar."
+                            append_to_feedback(
+                                active_feedback['id'],
+                                active_feedback['message'],
+                                text,
+                                update_region,
+                                None, None, None,
+                                new_rua=None,
+                                new_location_status=new_loc_status,
+                            )
+                            send_whatsapp_message(remote_jid, reply)
+                            current_message = append_conversation_entry(active_feedback['message'], 'client', text)
+                            record_agent_reply(active_feedback['id'], current_message, reply)
+                            return jsonify({"status": "updated_existing_location"}), 200
 
                         # Calcula novo status de localização
                         extracted_rua = extract_street_from_text(text) if effective_has_street else None
@@ -1911,6 +1977,49 @@ Tom: próximo, humano, sem burocracia."""
         import traceback
         traceback.print_exc()
         return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route("/api/admin/moderation", methods=["GET"])
+def list_moderation():
+    """Lista todos os números com restrição ativa (mute ou bloqueio)."""
+    admin_key = os.getenv("ADMIN_KEY", "")
+    if not admin_key or request.args.get("key") != admin_key:
+        return jsonify({"error": "unauthorized"}), 401
+    state = load_moderation_state()
+    now = datetime.utcnow()
+    result = []
+    for jid, entry in state.items():
+        mute_until = parse_iso_datetime(entry.get("mute_until"))
+        blocked_until = parse_iso_datetime(entry.get("blocked_until"))
+        active_mute = mute_until and mute_until > now
+        active_block = blocked_until and blocked_until > now
+        if active_mute or active_block or entry.get("abuse_score", 0) > 0:
+            result.append({
+                "phone": jid,
+                "abuse_score": entry.get("abuse_score", 0),
+                "status": entry.get("status"),
+                "mute_until": entry.get("mute_until"),
+                "blocked_until": entry.get("blocked_until"),
+                "last_infraction_at": entry.get("last_infraction_at"),
+            })
+    result.sort(key=lambda x: x.get("last_infraction_at") or "", reverse=True)
+    return jsonify(result)
+
+@app.route("/api/admin/moderation/reset", methods=["POST"])
+def reset_moderation():
+    """Zera o estado de moderação de um número específico."""
+    admin_key = os.getenv("ADMIN_KEY", "")
+    if not admin_key or request.json.get("key") != admin_key:
+        return jsonify({"error": "unauthorized"}), 401
+    phone = request.json.get("phone")
+    if not phone:
+        return jsonify({"error": "phone required"}), 400
+    state = load_moderation_state()
+    if phone in state:
+        del state[phone]
+        save_moderation_state(state)
+        print(f"[ADMIN] Moderação zerada para {phone}")
+        return jsonify({"success": True, "phone": phone})
+    return jsonify({"success": False, "message": "número não encontrado no estado de moderação"})
 
 @app.route("/api/feedback/<int:feedback_id>/status", methods=["PUT"])
 def update_feedback_status(feedback_id):
