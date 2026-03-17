@@ -1277,7 +1277,7 @@ Regras:
 
 # Rate Limiter: max messages per sender in a time window
 rate_limit_store = defaultdict(list)  # {remoteJid: [timestamps]}
-RATE_LIMIT_MAX = 3        # max messages per window
+RATE_LIMIT_MAX = 20       # max messages por janela (conversas multi-turno são normais)
 RATE_LIMIT_WINDOW = 600   # 10 minutes (in seconds)
 
 def is_rate_limited(remote_jid):
@@ -1705,14 +1705,8 @@ def webhook():
                     return jsonify({"status": moderation["status"]}), 200
                 if is_rate_limited(remote_jid):
                     print(f"[RATE-LIMIT] {remote_jid} exceeded {RATE_LIMIT_MAX} msgs in {RATE_LIMIT_WINDOW}s")
-                    moderation = register_moderation_infraction(
-                        remote_jid,
-                        text,
-                        ["spam"],
-                        2,
-                        severe=False
-                    )
-                    send_whatsapp_message(remote_jid, moderation["reply"])
+                    # Não registra como abuso — rate limit é proteção técnica, não comportamental
+                    send_whatsapp_message(remote_jid, "Recebi muitas mensagens em seguida. Aguarde um momento e tente novamente.")
                     return jsonify({"status": "rate_limited"}), 200
                 
                 feedbacks = get_feedbacks()
