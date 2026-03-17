@@ -2057,10 +2057,14 @@
                       </div>`
                     : '';
 
+                const _locStatus1 = e.location_status || 'pendente';
+                const _locBadge1 = (_locStatus1 !== 'completo' && e.urgency !== 'Positivo')
+                    ? `<span title="Endereço não informado" style="display:inline-flex;align-items:center;gap:2px;background:#f59e0b18;color:#f59e0b;border:1px solid #f59e0b55;font-size:0.62rem;font-weight:700;padding:2px 6px;border-radius:4px;margin-left:4px;"><i class="ri-map-pin-2-line"></i> SEM ENDEREÇO</span>`
+                    : '';
                 container.innerHTML += `
                     <div class="feedback-card clickable" onclick="openThreadModal(${e.id})" data-id="${e.id}">
                         <div class="fb-header">
-                            <span class="fb-tag" style="background:${urgencyColor}20; color:${urgencyColor}; border:1px solid ${urgencyColor}">${e.category}</span>
+                            <div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;"><span class="fb-tag" style="background:${urgencyColor}20; color:${urgencyColor}; border:1px solid ${urgencyColor}">${e.category}</span>${_locBadge1}</div>
                             <div class="fb-time" title="${e.timestamp}"><i class="ri-time-line"></i> ${formatarTempo(e.timestamp)}</div>
                         </div>
                         ${mediaThumb}
@@ -2202,6 +2206,7 @@
                     <div>
                         <div style="font-size:1.1rem; font-weight:700; display:flex; align-items:center; gap:8px;"><i class="ri-chat-3-fill" style="color:#059669;"></i> ${displayName}</div>
                         <div class="thread-sender">${displayPhone} ${whatsappLink} <span style="color:var(--border)">|</span> <span style="background:${urgencyColor}20;color:${urgencyColor};border:1px solid ${urgencyColor};font-size:0.7rem;font-weight:700;padding:2px 8px;border-radius:4px;">${e.category}</span></div>
+                        <div style="margin-top:4px;">${e.rua ? `<span style="color:#34d399;font-size:0.75rem;"><i class="ri-map-pin-line"></i> ${e.rua}${e.region && e.region !== 'N/A' ? ', ' + e.region : ''}</span>` : (e.region && e.region !== 'N/A' ? `<span style="color:#6ee7b7;font-size:0.75rem;"><i class="ri-map-pin-line"></i> ${e.region}</span>` : `<span style="color:#f59e0b;font-size:0.75rem;"><i class="ri-map-pin-2-line"></i> Endereço não informado</span>`)}</div>
                     </div>
                     <button onclick="closeThreadModal()" style="background:transparent;border:none;color:var(--text-muted);font-size:1.4rem;cursor:pointer;line-height:1;">×</button>
                 </div>
@@ -2306,10 +2311,14 @@
                             ? `<div class="linked-badge" onclick="event.stopPropagation(); showLinkedCards(${e.id}, '${(e.sender || e.remoteJid || '').replace(/'/g, "\\'")}')" title="Ver cards anteriores deste cidadão"><i class="ri-links-line"></i> Ver anteriores</div>`
                             : '';
 
+                        const _locStatus2 = e.location_status || 'pendente';
+                        const _locBadge2 = (_locStatus2 !== 'completo' && e.urgency !== 'Positivo')
+                            ? `<span title="Endereço não informado" style="display:inline-flex;align-items:center;gap:2px;background:#f59e0b18;color:#f59e0b;border:1px solid #f59e0b55;font-size:0.62rem;font-weight:700;padding:2px 6px;border-radius:4px;margin-left:4px;"><i class="ri-map-pin-2-line"></i> SEM ENDEREÇO</span>`
+                            : '';
                         container.innerHTML += `
                             <div class="feedback-card clickable" onclick="openThreadModal(${e.id})" data-id="${e.id}">
                                 <div class="fb-header">
-                                    <span class="fb-tag" style="background:${urgencyColor}20; color:${urgencyColor}; border:1px solid ${urgencyColor}">${e.category}</span>
+                                    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;"><span class="fb-tag" style="background:${urgencyColor}20; color:${urgencyColor}; border:1px solid ${urgencyColor}">${e.category}</span>${_locBadge2}</div>
                                     <div class="fb-time" title="${e.timestamp}"><i class="ri-time-line"></i> ${formatarTempo(e.timestamp)}</div>
                                 </div>
                                 ${mediaThumb}
@@ -2452,6 +2461,7 @@
                     <div>
                         <div style="font-size:1.1rem; font-weight:700; display:flex; align-items:center; gap:8px;"><i class="ri-chat-3-fill" style="color:#059669;"></i> ${displayName}</div>
                         <div class="thread-sender">${displayPhone} ${whatsappLink} <span style="color:var(--border)">|</span> <span style="background:${urgencyColor}20;color:${urgencyColor};border:1px solid ${urgencyColor};font-size:0.7rem;font-weight:700;padding:2px 8px;border-radius:4px;">${e.category}</span></div>
+                        <div style="margin-top:4px;">${e.rua ? `<span style="color:#34d399;font-size:0.75rem;"><i class="ri-map-pin-line"></i> ${e.rua}${e.region && e.region !== 'N/A' ? ', ' + e.region : ''}</span>` : (e.region && e.region !== 'N/A' ? `<span style="color:#6ee7b7;font-size:0.75rem;"><i class="ri-map-pin-line"></i> ${e.region}</span>` : `<span style="color:#f59e0b;font-size:0.75rem;"><i class="ri-map-pin-2-line"></i> Endereço não informado</span>`)}</div>
                     </div>
                     <button onclick="closeThreadModal()" style="background:transparent;border:none;color:var(--text-muted);font-size:1.4rem;cursor:pointer;line-height:1;">×</button>
                 </div>

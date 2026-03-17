@@ -428,19 +428,67 @@ def is_waiting_for_location(raw_message):
         'sua rua',
         'em qual bairro',
         'qual bairro',
-        'bairro e rua'
+        'bairro e rua',
+        'nome da rua',
+        'qual é a rua',
+        'qual conjunto',
+        'em qual conjunto',
+        'me dizer a rua',
+        'me informar a rua',
+        'me informar o bairro',
+        'qual endereço',
+        'qual o endereço',
     )
     return any(prompt in last_agent for prompt in location_prompts)
 
 def detect_location_components(text):
-    """Retorna (tem_rua, tem_bairro, regiao_detectada)."""
+    """Retorna (tem_rua, tem_bairro, regiao_detectada).
+    Referências vagas/possessivas ('minha rua', 'meu bairro') não contam como endereço específico.
+    """
     normalized = normalize_text(text)
+    # Referência possessiva/vaga não conta como rua ou bairro específico
+    if is_vague_location(text):
+        region = classificar_regiao(text)
+        return False, False, region
     has_street = bool(re.search(r"\b(rua|r\.|avenida|av\.|travessa|estrada|rodovia|alameda)\b", normalized))
     has_neighborhood = bool(re.search(r"\b(bairro|conjunto|vila|jardim|zona|setor|distrito)\b", normalized))
     region = classificar_regiao(text)
     if region != 'N/A':
         has_neighborhood = True
     return has_street, has_neighborhood, region
+
+VAGUE_LOCATION_PATTERNS = [
+    r'\bminha rua\b',
+    r'\bmeu bairro\b',
+    r'\bminha casa\b',
+    r'\baqui perto\b',
+    r'\baqui na rua\b',
+    r'\bperto de casa\b',
+    r'\bna minha rua\b',
+    r'\bna rua aqui\b',
+    r'\bna rua de casa\b',
+    r'\baqui no bairro\b',
+    r'\bno meu bairro\b',
+]
+
+def is_vague_location(text: str) -> bool:
+    """Retorna True se o texto menciona local de forma vaga/possessiva (não é endereço real)."""
+    normalized = normalize_text(text)
+    return any(re.search(p, normalized) for p in VAGUE_LOCATION_PATTERNS)
+
+def extract_street_from_text(text: str):
+    """Extrai nome de rua ou avenida do texto do cidadão. Retorna string ou None."""
+    normalized = normalize_text(text)
+    match = re.search(
+        r'\b(rua|avenida|av\.?|r\.)\s+([a-záéíóúãõâêôàç][a-záéíóúãõâêôàç\s]{2,40}?)(?:\s*,|\s+n[°º]?|\s+\d|\s*$)',
+        normalized,
+        re.IGNORECASE
+    )
+    if match:
+        prefix = match.group(1).strip().title()
+        name = match.group(2).strip().title()
+        return f"{prefix} {name}"
+    return None
 
 def build_location_followup_reply(has_street, has_neighborhood):
     if has_street and has_neighborhood:
@@ -889,7 +937,9 @@ Regras de categoria:
         return None
 
 # --- AI RESPONSE FUNCTION (PERSONA: CLARA) ---
-def generate_ai_response(text, category, urgency, protocol_num):
+LOCATION_OPTIONAL_CATEGORIES = {'Assistência Social'}
+
+def generate_ai_response(text, category, urgency, protocol_num, location_status='pendente'):
     """Gera resposta da Clara - atendente virtual da Prefeitura de Ivaté-PR"""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
@@ -916,6 +966,18 @@ def generate_ai_response(text, category, urgency, protocol_num):
         'Pode usar no máximo 1 emoji positivo (ex: 😊 ou ❤️) ao final.'
     )
 
+    # Instrução de localização injetada conforme o status atual do endereço
+    needs_location = location_status != 'completo' and category not in LOCATION_OPTIONAL_CATEGORIES
+    if needs_location:
+        location_instruction = """
+INSTRUÇÃO CRÍTICA — ENDEREÇO INCOMPLETO (esta reclamação ainda não tem endereço):
+- Expressões como "minha rua", "aqui perto", "meu bairro", "na rua de casa" NÃO são endereços — são vagas.
+- Você DEVE perguntar o nome da rua específica E o bairro ou conjunto, na mesma frase, de forma natural.
+- Exemplo: "Para acionar a equipe no local certo, qual é o nome da rua e o bairro ou conjunto?"
+- NUNCA confirme que registrou o endereço se o cidadão usou expressão possessiva vaga ("minha rua", "aqui perto")."""
+    else:
+        location_instruction = "O endereço já foi coletado. Não pergunte novamente sobre localização."
+
     try:
         from openai import OpenAI
         client = OpenAI(api_key=api_key)
@@ -931,13 +993,14 @@ REGRAS ABSOLUTAS:
 - Categoria registrada: {category}.
 - {urgency_instruction}
 - {emoji_rule}
+{location_instruction}
 
 SOBRE PERGUNTAS DE ACOMPANHAMENTO (muito importante):
 - Leia a mensagem com atenção e pergunte exatamente o que está faltando para resolver o caso.
-- Se a mensagem menciona um local genérico (ex: "no PAN", "na UBS", "na escola"), pergunte QUAL especificamente e EM QUAL BAIRRO.
+- Se a mensagem menciona um local genérico (ex: "no PAN", "na UBS", "na escola"), pergunte QUAL especificamente e EM QUAL BAIRRO OU CONJUNTO.
 - Se menciona falta de produto/serviço (ex: remédio, merenda, água), pergunte QUAL produto/serviço está faltando E o local completo.
-- Se não menciona absolutamente nenhum local, pergunte o bairro ou a rua.
-- NUNCA pergunte só "bairro ou rua" quando há um local específico mencionado — seja contextual.
+- Se não menciona absolutamente nenhum local, pergunte a rua e o bairro/conjunto.
+- NUNCA pergunte só "bairro ou rua" quando há um local institucional mencionado — seja contextual.
 - NUNCA mencione "Categoria classificada é" de forma robótica."""
 
         response = client.chat.completions.create(
@@ -1511,7 +1574,7 @@ def append_to_feedback(feedback_id, old_message, new_content, new_region=None, n
                 pass
         return False
 
-def append_to_feedback(feedback_id, old_message, new_content, new_region=None, new_urgency=None, new_sentiment=None, new_category=None):
+def append_to_feedback(feedback_id, old_message, new_content, new_region=None, new_urgency=None, new_sentiment=None, new_category=None, new_rua=None, new_location_status=None):
     """Versao estruturada do append para manter a conversa completa no mesmo feedback."""
     sb = get_supabase()
     if not sb:
@@ -1528,6 +1591,10 @@ def append_to_feedback(feedback_id, old_message, new_content, new_region=None, n
         data['sentiment'] = new_sentiment
     if new_category and new_category != "Geral" and new_category != "N/A":
         data['category'] = new_category
+    if new_rua:
+        data['rua'] = new_rua
+    if new_location_status:
+        data['location_status'] = new_location_status
 
     try:
         sb.table('feedbacks').update(data).eq('id', feedback_id).execute()
@@ -1670,12 +1737,21 @@ def webhook():
                     waiting_for_location = is_waiting_for_location(active_feedback.get('message', ''))
                     if waiting_for_location:
                         has_street, has_neighborhood, detected_region = detect_location_components(text)
-                        update_region = None
+                        _is_vague = is_vague_location(text)
+                        # Só aceita rua/bairro se não for referência vaga
+                        effective_has_street = has_street and not _is_vague
                         current_region = active_feedback.get('region', 'N/A')
+                        update_region = None
                         if current_region and current_region != 'N/A':
                             has_neighborhood = True
                         if (not current_region or current_region == 'N/A') and (detected_region and detected_region != 'N/A'):
                             update_region = detected_region
+                        effective_region = update_region or current_region
+                        effective_has_hood = has_neighborhood or (effective_region and effective_region != 'N/A')
+
+                        # Calcula novo status de localização
+                        extracted_rua = extract_street_from_text(text) if effective_has_street else None
+                        new_loc_status = 'completo' if (effective_has_street and effective_has_hood) else 'pendente'
 
                         append_to_feedback(
                             active_feedback['id'],
@@ -1684,10 +1760,12 @@ def webhook():
                             update_region,
                             None,
                             None,
-                            None
+                            None,
+                            new_rua=extracted_rua,
+                            new_location_status=new_loc_status,
                         )
 
-                        reply = build_location_followup_reply(has_street, has_neighborhood)
+                        reply = build_location_followup_reply(effective_has_street, effective_has_hood)
                         send_whatsapp_message(remote_jid, reply)
                         current_message = append_conversation_entry(active_feedback['message'], 'client', text)
                         record_agent_reply(active_feedback['id'], current_message, reply)
@@ -1728,16 +1806,28 @@ def webhook():
                             update_urgency = sentimento
                             update_sentiment = "Positivo" if sentimento == "Positivo" else ("Negativo" if sentimento in ["Critico", "Urgente"] else "Neutro")
                         
-                        append_to_feedback(active_feedback['id'], active_feedback['message'], text, update_region, update_urgency, update_sentiment, None)
+                        # Verifica se o endereço ainda está faltando para este chamado
+                        current_loc_status = active_feedback.get('location_status', 'pendente')
+                        thread_extracted_rua = extract_street_from_text(text)
+                        thread_has_s, _, _ = detect_location_components(text)
+                        # Só atualiza rua/status se o cidadão forneceu endereço real (não vago)
+                        new_thread_rua = thread_extracted_rua if (thread_has_s and thread_extracted_rua) else None
+                        new_thread_loc_status = 'completo' if new_thread_rua else None  # só upgrade
+
+                        append_to_feedback(active_feedback['id'], active_feedback['message'], text, update_region, update_urgency, update_sentiment, None, new_rua=new_thread_rua, new_location_status=new_thread_loc_status)
 
                         try:
                             from openai import OpenAI
                             client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
                             urgency_note = 'A prioridade do chamado foi elevada.' if update_urgency in ['Critico', 'Urgente'] else ''
+                            # Injeta lembrete de endereço se ainda está faltando e não foi fornecido agora
+                            missing_address_note = ''
+                            if current_loc_status != 'completo' and not new_thread_rua and categoria not in LOCATION_OPTIONAL_CATEGORIES:
+                                missing_address_note = '\nATENÇÃO: este chamado ainda não tem endereço completo. Se a mensagem não informar rua e bairro específicos, pergunte de forma natural e breve ao final da resposta.'
                             reply_prompt = f"""Você é a Clara, atendente da Prefeitura de Ivaté - PR.
 O cidadão já tem um chamado aberto. Ele enviou uma nova mensagem adicional.
 MENSAGEM: "{text}"
-{urgency_note}
+{urgency_note}{missing_address_note}
 Escreva UMA resposta amigável e curta (máx. 3 frases) confirmando que a informação foi adicionada ao chamado.
 Tom: próximo, humano, sem burocracia."""
                             resp = client.chat.completions.create(
@@ -1782,6 +1872,11 @@ Tom: próximo, humano, sem burocracia."""
                 current_year = datetime.now().year
                 protocol_num = f"{current_year}{current_id:04d}"
 
+                # Calcula status de localização inicial
+                _has_s, _has_n, _ = detect_location_components(text)
+                extracted_rua = extract_street_from_text(text)
+                initial_loc_status = 'completo' if (_has_s and (_has_n or (regiao and regiao != 'N/A'))) else 'pendente'
+
                 new_report = {
                     "id": current_id,
                     "sender": remote_jid,
@@ -1794,17 +1889,19 @@ Tom: próximo, humano, sem burocracia."""
                     "urgency": sentimento,
                     "sentiment": "Positivo" if sentimento == "Positivo" else ("Negativo" if sentimento in ["Critico", "Urgente"] else "Neutro"),
                     "topic": topic,
-                    "status": "aberto"
+                    "status": "aberto",
+                    "rua": extracted_rua,
+                    "location_status": initial_loc_status,
                 }
                 if linked_from_id:
                     new_report["linked_from"] = linked_from_id
 
                 # Save feedback FIRST (before AI response to avoid data loss)
                 save_feedback(new_report)
-                
+
                 # Reply (AI Generated) — wrapped so failure doesn't lose saved data
                 try:
-                    reply = generate_ai_response(text, categoria, sentimento, protocol_num)
+                    reply = generate_ai_response(text, categoria, sentimento, protocol_num, initial_loc_status)
                     send_whatsapp_message(remote_jid, reply)
                     record_agent_reply(current_id, new_report['message'], reply)
                 except Exception as e:
