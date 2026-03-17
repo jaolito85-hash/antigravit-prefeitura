@@ -96,7 +96,7 @@ MILD_PROFANITY_PATTERNS = (
 )
 
 SEVERE_ABUSE_PATTERNS = (
-    'idiota', 'burro', 'imbecil', 'otario', 'babaca', 'lixo',
+    'idiota', 'burro', 'imbecil', 'otario', 'babaca',
     'fdp', 'filho da puta', 'vai se foder', 'vai tomar no cu',
     'arrombado', 'desgracado', 'vagabundo'
 )
