@@ -1,0 +1,95 @@
+{
+    "categories": [
+        {
+            "name": "Infraestrutura & Obras",
+            "color": "#f59e0b",
+            "count": 0
+        },
+        {
+            "name": "Saúde & Atendimento",
+            "color": "#ec4899",
+            "count": 0
+        },
+        {
+            "name": "Educação & Escolas",
+            "color": "#8b5cf6",
+            "count": 0
+        },
+        {
+            "name": "Segurança Pública",
+            "color": "#ef4444",
+            "count": 0
+        },
+        {
+            "name": "Limpeza Urbana",
+            "color": "#10b981",
+            "count": 0
+        },
+        {
+            "name": "Meio Ambiente",
+            "color": "#22c55e",
+            "count": 0
+        },
+        {
+            "name": "Agricultura & Rural",
+            "color": "#84cc16",
+            "count": 0
+        },
+        {
+            "name": "Assistência Social",
+            "color": "#f97316",
+            "count": 0
+        },
+        {
+            "name": "Transporte & Mobilidade",
+            "color": "#3b82f6",
+            "count": 0
+        }
+    ],
+    "regions": [
+        {
+            "name": "Centro",
+            "count": 0
+        },
+        {
+            "name": "Conjunto Dona Angelina",
+            "count": 0
+        },
+        {
+            "name": "Conjunto João Guerreiro",
+            "count": 0
+        },
+        {
+            "name": "Conjunto Bela Vista",
+            "count": 0
+        },
+        {
+            "name": "Conjunto Santa Terezinha",
+            "count": 0
+        },
+        {
+            "name": "Conjunto Bom Gosto",
+            "count": 0
+        },
+        {
+            "name": "Conjunto Valdomiro Favero",
+            "count": 0
+        },
+        {
+            "name": "Conjunto Jardim Bom Sucesso",
+            "count": 0
+        },
+        {
+            "name": "Vila Rural Menino Jesus",
+            "count": 0
+        },
+        {
+            "name": "Herculandia",
+            "count": 0
+        },
+        {
+            "name": "Conjunto Eldorado",
+            "count": 0
+        }
+    ]
+}

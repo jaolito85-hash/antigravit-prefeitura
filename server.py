@@ -1,0 +1,1867 @@
+import os
+import requests
+import json
+import hashlib
+import csv
+import re
+from io import StringIO
+from flask import Flask, request, jsonify, render_template
+from dotenv import load_dotenv
+from datetime import datetime, timedelta
+from collections import Counter, defaultdict
+from time import time as time_now
+
+# Load environment variables
+load_dotenv()
+
+app = Flask(__name__, static_folder='static', static_url_path='/static')
+app.config['TEMPLATES_AUTO_RELOAD'] = True
+
+# Config
+EVOLUTION_API_URL = os.getenv("EVOLUTION_API_URL")
+EVOLUTION_API_KEY = os.getenv("EVOLUTION_API_KEY")
+EVOLUTION_INSTANCE_NAME = os.getenv("EVOLUTION_INSTANCE_NAME")
+
+# Supabase Config
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+# Initialize Supabase client (if configured)
+supabase = None
+if SUPABASE_URL and SUPABASE_KEY:
+    try:
+        from supabase import create_client, Client
+        supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        print("✅ Supabase connected!")
+    except Exception as e:
+        print(f"⚠️ Supabase connection failed: {e}")
+        supabase = None
+
+def get_supabase():
+    """Returns a working Supabase client, reconnecting if needed."""
+    global supabase
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return None
+    if supabase is None:
+        try:
+            from supabase import create_client, Client
+            supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+            print("🔄 Supabase reconnected!")
+        except Exception as e:
+            print(f"⚠️ Supabase reconnection failed: {e}")
+            return None
+    return supabase
+
+def _reconnect_supabase():
+    """Force reconnect Supabase client."""
+    global supabase
+    supabase = None
+    return get_supabase()
+
+# Fallback to local JSON if Supabase not configured
+EVENTS_FILE = 'execution/events.json'
+CONFIG_FILE = 'execution/config.json'
+MODERATION_FILE = 'execution/moderation_state.json'
+
+DEFAULT_REGIONS = [
+    "Centro",
+    "Conjunto Dona Angelina",
+    "Conjunto João Guerreiro",
+    "Conjunto Bela Vista",
+    "Conjunto Santa Terezinha",
+    "Conjunto Bom Gosto",
+    "Conjunto Valdomiro Favero",
+    "Conjunto Jardim Bom Sucesso",
+    "Vila Rural Menino Jesus",
+    "Herculandia",
+    "Conjunto Eldorado",
+]
+
+REGION_KEYWORDS = {
+    "Centro": ['centro', 'praça central', 'praca central', 'prefeitura', 'câmara', 'camara', 'catedral'],
+    "Conjunto Dona Angelina": ['dona angelina', 'conjunto dona angelina'],
+    "Conjunto João Guerreiro": ['joão guerreiro', 'joao guerreiro', 'conjunto joão guerreiro', 'conjunto joao guerreiro'],
+    "Conjunto Bela Vista": ['bela vista', 'conjunto bela vista'],
+    "Conjunto Santa Terezinha": ['santa terezinha', 'conjunto santa terezinha'],
+    "Conjunto Bom Gosto": ['bom gosto', 'conjunto bom gosto'],
+    "Conjunto Valdomiro Favero": ['valdomiro favero', 'conjunto valdomiro favero'],
+    "Conjunto Jardim Bom Sucesso": ['jardim bom sucesso', 'conjunto jardim bom sucesso', 'bom sucesso'],
+    "Vila Rural Menino Jesus": ['vila rural menino jesus', 'menino jesus'],
+    "Herculandia": ['herculandia', 'herculândia'],
+    "Conjunto Eldorado": ['eldorado', 'conjunto eldorado'],
+}
+
+MILD_PROFANITY_PATTERNS = (
+    'porra', 'caralho', 'cacete', 'merda', 'puta merda'
+)
+
+SEVERE_ABUSE_PATTERNS = (
+    'idiota', 'burro', 'imbecil', 'otario', 'babaca', 'lixo',
+    'fdp', 'filho da puta', 'vai se foder', 'vai tomar no cu',
+    'arrombado', 'desgracado', 'vagabundo'
+)
+
+THREAT_PATTERNS = (
+    'vou te matar', 'vou matar', 'ameaca', 'te pego',
+    'vou quebrar', 'vou quebrar tudo', 'vou te achar'
+)
+
+# --- MEDIA & TRANSCRIPTION ---
+
+def download_evolution_media(remote_jid, message_id):
+    """Downloads media from Evolution API and returns binary content."""
+    if not EVOLUTION_API_URL or not EVOLUTION_API_KEY or not EVOLUTION_INSTANCE_NAME:
+        return None
+    
+    url = f"{EVOLUTION_API_URL}/chat/getBase64FromMessage/{EVOLUTION_INSTANCE_NAME}"
+    headers = {"apikey": EVOLUTION_API_KEY, "Content-Type": "application/json"}
+    payload = {"message": {"key": {"id": message_id, "remoteJid": remote_jid, "fromMe": False}}}
+    
+    try:
+        response = requests.post(url, json=payload, headers=headers, timeout=20)
+        if response.status_code == 200:
+            import base64
+            # Evolution API return structure: { "base64": "..." }
+            data = response.json()
+            if "base64" in data:
+                return base64.b64decode(data["base64"])
+        return None
+    except Exception as e:
+        print(f"❌ Error downloading media: {e}")
+        return None
+
+def transcribe_audio(audio_content):
+    """Transcribes audio content using OpenAI Whisper API."""
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key or not audio_content:
+        return None
+    
+    try:
+        from openai import OpenAI
+        from io import BytesIO
+        client = OpenAI(api_key=api_key)
+        
+        # Whisper requires a file-like object with a name attribute
+        audio_file = BytesIO(audio_content)
+        audio_file.name = "audio.ogg"
+        
+        transcript = client.audio.transcriptions.create(
+            model="whisper-1", 
+            file=audio_file,
+        )
+        return transcript.text
+    except Exception as e:
+        print(f"❌ Transcription error: {e}")
+        return None
+
+# --- HELPER FUNCTIONS ---
+
+def load_json(filepath, default):
+    """Fallback for local JSON files"""
+    if not os.path.exists(filepath):
+        return default
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except:
+        return default
+
+def save_json(filepath, data):
+    with open(filepath, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+def load_moderation_state():
+    return load_json(MODERATION_FILE, {})
+
+def save_moderation_state(state):
+    save_json(MODERATION_FILE, state)
+
+def get_moderation_entry(remote_jid):
+    state = load_moderation_state()
+    entry = state.get(remote_jid) or {
+        "abuse_score": 0,
+        "status": "active",
+        "mute_until": None,
+        "blocked_until": None,
+        "last_infraction_at": None,
+        "infractions": []
+    }
+    return state, entry
+
+def parse_iso_datetime(value):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace('Z', '+00:00')).replace(tzinfo=None)
+    except Exception:
+        return None
+
+def clean_expired_moderation(entry):
+    now = datetime.utcnow()
+    mute_until = parse_iso_datetime(entry.get("mute_until"))
+    blocked_until = parse_iso_datetime(entry.get("blocked_until"))
+    last_infraction = parse_iso_datetime(entry.get("last_infraction_at"))
+
+    if blocked_until and blocked_until <= now:
+        entry["blocked_until"] = None
+    if mute_until and mute_until <= now:
+        entry["mute_until"] = None
+    if last_infraction and (now - last_infraction) > timedelta(days=3):
+        entry["abuse_score"] = max(0, int(entry.get("abuse_score", 0)) - 3)
+    if not entry.get("blocked_until") and not entry.get("mute_until"):
+        entry["status"] = "active"
+    return entry
+
+def format_restriction_window(until_iso):
+    until_dt = parse_iso_datetime(until_iso)
+    if not until_dt:
+        return "por um tempo"
+    delta = until_dt - datetime.utcnow()
+    minutes = max(int(delta.total_seconds() // 60), 1)
+    if minutes < 60:
+        return f"por cerca de {minutes} min"
+    hours = max(round(minutes / 60), 1)
+    return f"pelas próximas {hours}h"
+
+def get_active_restriction(remote_jid):
+    state, entry = get_moderation_entry(remote_jid)
+    entry = clean_expired_moderation(entry)
+    state[remote_jid] = entry
+    save_moderation_state(state)
+
+    if entry.get("blocked_until"):
+        return {
+            "status": "blocked",
+            "reply": f"Seu atendimento está suspenso {format_restriction_window(entry['blocked_until'])} por mensagens ofensivas ou abuso. Quando esse prazo passar, você pode falar comigo novamente por aqui."
+        }
+    if entry.get("mute_until"):
+        return {
+            "status": "muted",
+            "reply": f"Vou pausar este atendimento {format_restriction_window(entry['mute_until'])} porque chegaram mensagens ofensivas ou em excesso. Se quiser continuar depois, estarei por aqui."
+        }
+    return None
+
+def normalize_text(text):
+    text = (text or '').lower()
+    replacements = {
+        'á': 'a', 'à': 'a', 'ã': 'a', 'â': 'a',
+        'é': 'e', 'ê': 'e',
+        'í': 'i',
+        'ó': 'o', 'ô': 'o', 'õ': 'o',
+        'ú': 'u',
+        'ç': 'c'
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    return text.strip()
+
+def analyze_abuse_message(text):
+    normalized = normalize_text(text)
+    reasons = []
+    score = 0
+    severe = False
+
+    if any(pattern in normalized for pattern in THREAT_PATTERNS):
+        reasons.append("ameaça")
+        score += 5
+        severe = True
+    if any(pattern in normalized for pattern in SEVERE_ABUSE_PATTERNS):
+        reasons.append("ofensa direta")
+        score += 3
+    if any(pattern in normalized for pattern in MILD_PROFANITY_PATTERNS):
+        reasons.append("palavrão")
+        score += 1
+
+    return {"score": score, "reasons": reasons, "severe": severe}
+
+def register_moderation_infraction(remote_jid, text, reasons, score_increment, severe=False):
+    state, entry = get_moderation_entry(remote_jid)
+    entry = clean_expired_moderation(entry)
+
+    now = datetime.utcnow()
+    entry["abuse_score"] = int(entry.get("abuse_score", 0)) + int(score_increment)
+    entry["last_infraction_at"] = now.isoformat()
+    infractions = entry.get("infractions") or []
+    infractions.insert(0, {
+        "timestamp": now.isoformat(),
+        "reasons": reasons,
+        "message": (text or "")[:240]
+    })
+    entry["infractions"] = infractions[:20]
+
+    reply = "Quero te ajudar, mas preciso que a conversa siga com respeito."
+    status = "warned"
+
+    if severe or entry["abuse_score"] >= 8:
+        entry["blocked_until"] = (now + timedelta(hours=24)).isoformat()
+        entry["mute_until"] = None
+        entry["status"] = "blocked"
+        reply = "Seu atendimento foi suspenso por 24h por mensagens ofensivas. Se quiser continuar depois, estarei por aqui."
+        status = "blocked"
+    elif entry["abuse_score"] >= 4:
+        entry["mute_until"] = (now + timedelta(minutes=30)).isoformat()
+        entry["status"] = "muted"
+        reply = "Vou pausar este atendimento por 30 min porque chegaram ofensas ou mensagens em excesso. Se quiser continuar depois, estarei por aqui."
+        status = "muted"
+    else:
+        entry["status"] = "warned"
+        reply = "Quero te ajudar, mas preciso que a conversa siga com respeito. Se quiser, pode me contar o problema sem ofensas."
+
+    state[remote_jid] = entry
+    save_moderation_state(state)
+    return {"status": status, "reply": reply, "entry": entry}
+
+def save_json(filepath, data):
+    """Fallback for local JSON files"""
+    with open(filepath, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+def get_feedbacks():
+    """Get feedbacks from Supabase or local JSON"""
+    sb = get_supabase()
+    if sb:
+        try:
+            response = sb.table('feedbacks').select('*').order('updated_at', desc=True).execute()
+            return response.data
+        except Exception as e:
+            print(f"Supabase error: {e}")
+            sb = _reconnect_supabase()
+            if sb:
+                try:
+                    response = sb.table('feedbacks').select('*').order('updated_at', desc=True).execute()
+                    return response.data
+                except Exception as e2:
+                    print(f"Supabase retry failed: {e2}")
+            return load_json(EVENTS_FILE, [])
+    return load_json(EVENTS_FILE, [])
+
+CONVERSATION_MARKER_RE = re.compile(
+    r"\[\[(CLIENT|AGENT)\|([^\]]+)\]\]\n([\s\S]*?)(?=\n\n\[\[(?:CLIENT|AGENT)\||\Z)"
+)
+LEGACY_UPDATE_SPLIT_RE = re.compile(
+    r"\n\n\[Atualiza(?:Ã§Ã£o|cao)(?:\s+\d{2}:\d{2})?\]:\s*",
+    re.IGNORECASE
+)
+
+def serialize_conversation(entries):
+    blocks = []
+    for entry in entries:
+        role = 'AGENT' if entry.get('role') == 'agent' else 'CLIENT'
+        timestamp = entry.get('timestamp') or datetime.utcnow().isoformat()
+        text = (entry.get('text') or '').strip()
+        if not text:
+            continue
+        blocks.append(f"[[{role}|{timestamp}]]\n{text}")
+    return "\n\n".join(blocks)
+
+def parse_feedback_conversation(raw_message):
+    raw_message = (raw_message or '').strip()
+    if not raw_message:
+        return []
+
+    matches = list(CONVERSATION_MARKER_RE.finditer(raw_message))
+    if matches:
+        entries = []
+        for match in matches:
+            role, timestamp, text = match.groups()
+            entries.append({
+                "role": "agent" if role == "AGENT" else "client",
+                "timestamp": timestamp or None,
+                "text": (text or '').strip()
+            })
+        return entries
+
+    legacy_parts = [part.strip() for part in LEGACY_UPDATE_SPLIT_RE.split(raw_message) if part.strip()]
+    if legacy_parts:
+        return [{"role": "client", "timestamp": None, "text": part} for part in legacy_parts]
+
+    return [{"role": "client", "timestamp": None, "text": raw_message}]
+
+def build_feedback_message(text, timestamp=None):
+    return serialize_conversation([{
+        "role": "client",
+        "timestamp": timestamp or datetime.utcnow().isoformat(),
+        "text": text
+    }])
+
+def append_conversation_entry(raw_message, role, text, timestamp=None):
+    entries = parse_feedback_conversation(raw_message)
+    entries.append({
+        "role": role,
+        "timestamp": timestamp or datetime.utcnow().isoformat(),
+        "text": text
+    })
+    return serialize_conversation(entries)
+
+def get_feedback_customer_messages(raw_message):
+    return [
+        entry.get('text', '')
+        for entry in parse_feedback_conversation(raw_message)
+        if entry.get('role') == 'client' and entry.get('text')
+    ]
+
+def get_feedback_customer_text(raw_message):
+    return "\n\n".join(get_feedback_customer_messages(raw_message)).strip()
+
+def get_feedback_preview(raw_message):
+    messages = get_feedback_customer_messages(raw_message)
+    return messages[0] if messages else ''
+
+def get_last_agent_message(raw_message):
+    entries = parse_feedback_conversation(raw_message)
+    for entry in reversed(entries):
+        if entry.get('role') == 'agent' and entry.get('text'):
+            return entry.get('text', '')
+    return ''
+
+def is_waiting_for_location(raw_message):
+    """Detecta se a ultima mensagem da Clara pediu rua/bairro/local."""
+    last_agent = normalize_text(get_last_agent_message(raw_message))
+    if not last_agent:
+        return False
+    location_prompts = (
+        'local completo',
+        'bairro/rua',
+        'bairro ou a rua',
+        'bairro ou rua',
+        'qual rua',
+        'sua rua',
+        'em qual bairro',
+        'qual bairro',
+        'bairro e rua'
+    )
+    return any(prompt in last_agent for prompt in location_prompts)
+
+def detect_location_components(text):
+    """Retorna (tem_rua, tem_bairro, regiao_detectada)."""
+    normalized = normalize_text(text)
+    has_street = bool(re.search(r"\b(rua|r\.|avenida|av\.|travessa|estrada|rodovia|alameda)\b", normalized))
+    has_neighborhood = bool(re.search(r"\b(bairro|conjunto|vila|jardim|zona|setor|distrito)\b", normalized))
+    region = classificar_regiao(text)
+    if region != 'N/A':
+        has_neighborhood = True
+    return has_street, has_neighborhood, region
+
+def build_location_followup_reply(has_street, has_neighborhood):
+    if has_street and has_neighborhood:
+        return "Muito obrigado! Seu chamado já foi registrado."
+    if has_street and not has_neighborhood:
+        return "Muito obrigado! Para concluir o registro, poderia me informar também o bairro?"
+    if has_neighborhood and not has_street:
+        return "Muito obrigado! Para concluir o registro, poderia me informar também a rua?"
+    return "Muito obrigado! Para concluir o registro, preciso da rua e do bairro."
+
+def serialize_feedback_for_api(feedback):
+    data = dict(feedback)
+    raw_message = feedback.get('message', '')
+    data['conversation'] = parse_feedback_conversation(raw_message)
+    data['message'] = get_feedback_preview(raw_message)
+    return data
+
+def record_agent_reply(feedback_id, current_message, reply):
+    if not feedback_id or not reply:
+        return False
+    updated_message = append_conversation_entry(current_message, 'agent', reply)
+    return update_feedback(feedback_id, {
+        'message': updated_message,
+        'updated_at': datetime.utcnow().isoformat()
+    })
+
+def save_feedback(feedback_data):
+    """Save feedback to Supabase or local JSON"""
+    # Normalize keys to match Supabase column names
+    data = feedback_data.copy()
+    if 'pushName' in data:
+        data['name'] = data.pop('pushName')
+    if 'remoteJid' in data:
+        data['sender'] = data.pop('remoteJid')
+
+    sb = get_supabase()
+    if sb:
+        try:
+            sb.table('feedbacks').insert(data).execute()
+            print("✅ Supabase insert success")
+            return True
+        except Exception as e:
+            print(f"❌ Supabase insert error: {e}")
+            sb = _reconnect_supabase()
+            if sb:
+                try:
+                    sb.table('feedbacks').insert(data).execute()
+                    return True
+                except Exception as e2:
+                    print(f"Supabase insert retry failed: {e2}")
+            # Fallback to local JSON
+            feedbacks = load_json(EVENTS_FILE, [])
+            feedbacks.insert(0, data)
+            save_json(EVENTS_FILE, feedbacks)
+            return True
+    else:
+        feedbacks = load_json(EVENTS_FILE, [])
+        feedbacks.insert(0, data)
+        save_json(EVENTS_FILE, feedbacks)
+        return True
+
+def update_feedback(feedback_id, updates):
+    """Update feedback in Supabase or local JSON"""
+    sb = get_supabase()
+    if sb:
+        try:
+            sb.table('feedbacks').update(updates).eq('id', feedback_id).execute()
+            return True
+        except Exception as e:
+            print(f"Supabase update error: {e}")
+            sb = _reconnect_supabase()
+            if sb:
+                try:
+                    sb.table('feedbacks').update(updates).eq('id', feedback_id).execute()
+                    return True
+                except Exception as e2:
+                    print(f"Supabase update retry failed: {e2}")
+            return False
+    else:
+        feedbacks = load_json(EVENTS_FILE, [])
+        for fb in feedbacks:
+            if fb.get('id') == feedback_id:
+                fb.update(updates)
+                break
+        save_json(EVENTS_FILE, feedbacks)
+        return True
+
+def get_config():
+    """Get config from Supabase or local JSON"""
+    default_regions = [{"name": region} for region in DEFAULT_REGIONS]
+    sb = get_supabase()
+    if sb:
+        try:
+            categories_resp = sb.table('config').select('*').eq('type', 'category').execute()
+            return {
+                "categories": [{"name": c['name'], "color": c.get('color', '#8b5cf6')} for c in categories_resp.data],
+                "regions": default_regions
+            }
+        except Exception as e:
+            print(f"Supabase config error: {e}")
+            sb = _reconnect_supabase()
+            if sb:
+                try:
+                    categories_resp = sb.table('config').select('*').eq('type', 'category').execute()
+                    return {
+                        "categories": [{"name": c['name'], "color": c.get('color', '#8b5cf6')} for c in categories_resp.data],
+                        "regions": default_regions
+                    }
+                except Exception as e2:
+                    print(f"Supabase config retry failed: {e2}")
+            config = load_json(CONFIG_FILE, {"categories": [], "regions": default_regions})
+            config["regions"] = default_regions
+            return config
+    config = load_json(CONFIG_FILE, {"categories": [], "regions": default_regions})
+    config["regions"] = default_regions
+    return config
+
+def get_next_id():
+    """Get next ID for new feedback"""
+    sb = get_supabase()
+    if sb:
+        try:
+            response = sb.table('feedbacks').select('id').order('id', desc=True).limit(1).execute()
+            if response.data:
+                return response.data[0]['id'] + 1
+            return 1
+        except:
+            return 1
+    else:
+        feedbacks = load_json(EVENTS_FILE, [])
+        return len(feedbacks) + 1
+
+# --- CLASSIFICATION FUNCTIONS (DETERMINISTIC - DO NOT CHANGE) ---
+
+def classificar_sentimento(texto):
+    """Classifica sentimento de reclamações municipais"""
+    texto_lower = texto.lower()
+    
+    # POSITIVO - verificar primeiro!
+    palavras_positivas = [
+        # Formais
+        'lindo', 'maravilhoso', 'incrivel', 'incrível', 'excelente', 'perfeito', 
+        'sensacional', 'fantastico', 'fantástico', 'adorei', 'amei', 'recomendo',
+        'parabens', 'parabéns', 'obrigado', 'obrigada', 'agradeço',
+        # Gírias BR
+        'top', 'show', 'bom', 'mto bom', 'muito bom', 'demais', 'd+', 'animal',
+        'brabo', 'brabissimo', 'foda', 'monstro', 'sinistro', 'insano', 'irado',
+        'maneiro', 'da hora', 'massa', 'dahora', 'firmeza', 'suave', 'de boa',
+        'arrasou', 'arrasa', 'lacrou', 'mitou', 'arrebentou', 'bombando',
+        'curti', 'curtindo', 'gostei', 'gostando', 'amando', 'to amando',
+        'muito legal', 'legal demais', 'show de bola', 'nota 10', '10/10',
+        # Elogios municipais
+        'melhorou', 'resolveram', 'consertaram', 'arrumaram', 'ficou bom',
+        'funcionando', 'ta funcionando', 'tá funcionando', 'voltou a funcionar'
+    ]
+    for palavra in palavras_positivas:
+        if palavra in texto_lower:
+            return 'Positivo'
+    
+    # CRÍTICO - emergências e riscos à vida
+    palavras_criticas = [
+        # Violência/Crime
+        'assalto', 'roubo', 'roubaram', 'briga', 'brigando', 'arma',
+        'agressao', 'agressão', 'perigo', 'violencia', 'violência', 'ferido',
+        'sangue', 'sangrando', 'emergencia', 'emergência', 'socorro',
+        'pancadaria', 'porrada', 'treta', 'tretando', 'covardia', 'facada',
+        'esfaqueado', 'tiro', 'tiroteio', 'navalhada',
+        'baixaria', 'confusão geral', 'saiu na mão', 'saindo na mão',
+        # Emergências médicas
+        'desmaiou', 'desmaiada', 'desmaiado', 'desacordado', 'desacordada',
+        'passou mal', 'passando mal', 'convulsão', 'convulsionando',
+        'infarto', 'enfartando', 'parada cardiaca', 'não respira', 'sem pulso',
+        'overdose', 'ambulancia', 'ambulância', 'samu', 'uti', 'hospital',
+        'médico', 'medico', 'paramédico', 'socorrer', 'reanimacao', 'reanimação',
+        # Acidentes graves / desastres
+        'acidente grave', 'atropelado', 'atropelamento', 'capotou', 'explosao',
+        'explosão', 'incendio', 'incêndio', 'fogo', 'queimando', 'desabou',
+        'desmoronou', 'afogando', 'afogado', 'afogamento',
+        # Infraestrutura crítica
+        'desabamento', 'cratera', 'poste caiu', 'fio caiu', 'fio solto',
+        'enchente', 'inundação', 'inundacao', 'deslizamento', 'soterrado'
+    ]
+    for palavra in palavras_criticas:
+        if palavra in texto_lower:
+            return 'Critico'
+    
+    # URGENTE - problemas que precisam atenção rápida
+    palavras_urgentes = [
+        # Problemas de infraestrutura
+        'buraco', 'buracos', 'cratera', 'asfalto', 'calçada quebrada',
+        'sem luz', 'sem iluminação', 'poste apagado', 'poste queimado',
+        'vazamento', 'esgoto', 'esgoto aberto', 'bueiro', 'bueiro entupido',
+        'sem agua', 'sem água', 'falta agua', 'falta água', 'cano estourado',
+        # Saúde
+        'sem médico', 'sem medico', 'posto fechado', 'ubs fechada',
+        'falta remedio', 'falta remédio', 'sem atendimento',
+        # Limpeza
+        'sujo', 'sujeira', 'lixo', 'lixão', 'mau cheiro', 'mal cheiro',
+        'rato', 'ratos', 'barata', 'baratas', 'dengue', 'mosquito',
+        'terreno baldio', 'mato alto', 'entulho',
+        # Transporte
+        'onibus quebrado', 'ônibus quebrado', 'sem onibus', 'sem ônibus',
+        'semaforo', 'semáforo', 'semáforo quebrado',
+        # Reclamações fortes
+        'pessimo', 'péssimo', 'horrivel', 'horrível', 'nojento', 'podre',
+        'absurdo', 'vergonha', 'palhaçada', 'sacanagem',
+        'descaso', 'desrespeito', 'inadmissível', 'inaceitável',
+        # Gírias BR reclamação
+        'ta osso', 'tá osso', 'ta foda', 'tá foda', 'paia', 'zoado',
+        'zuado', 'uma bosta', 'uma merda', 'um lixo', 'demora',
+        'demorando', 'atrasado', 'sem condição', 'sem condições',
+        'quebrado', 'quebrou', 'não funciona', 'nao funciona', 'pifou',
+        'estragou', 'faltando', 'faltou', 'acabou'
+    ]
+    for palavra in palavras_urgentes:
+        if palavra in texto_lower:
+            return 'Urgente'
+    
+    # NEUTRO (padrão)
+    return 'Neutro'
+
+def classificar_categoria(texto):
+    """Classifica categoria de reclamação municipal"""
+    texto_lower = texto.lower()
+    
+    # SEGURANÇA PÚBLICA (verificar primeiro - emergências)
+    palavras_seguranca = [
+        'assalto', 'roubo', 'roubaram', 'briga', 'brigando', 'seguranca', 'segurança',
+        'pancadaria', 'porrada', 'treta', 'confusão', 'baixaria', 'facada', 'tiro',
+        'tiroteio', 'droga', 'drogas', 'tráfico', 'trafico',
+        'policia', 'polícia', 'guarda', 'guarda municipal', 'ronda', 'viatura',
+        'perigo', 'perigoso', 'suspeito', 'arma', 'faca',
+        'vandalismo', 'pichação', 'pichacao', 'depredação', 'depredacao',
+        'violencia', 'violência', 'furto', 'arrombamento', 'invasão',
+        # Emergências
+        'desmaiou', 'passou mal', 'passando mal', 'socorrer',
+        'emergencia', 'emergência', 'ambulancia', 'ambulância', 'samu',
+        'acidente', 'atropelado', 'atropelamento'
+    ]
+    if any(p in texto_lower for p in palavras_seguranca):
+        return 'Segurança Pública'
+    
+    # SAÚDE & ATENDIMENTO
+    palavras_saude = [
+        'saude', 'saúde', 'hospital', 'ubs', 'posto de saude', 'posto de saúde',
+        'medico', 'médico', 'enfermeiro', 'enfermeira', 'consulta', 'exame',
+        'remedio', 'remédio', 'medicamento', 'farmacia', 'farmácia',
+        'vacina', 'vacinação', 'vacinacao', 'dengue', 'covid',
+        'fila hospital', 'fila posto', 'sem atendimento', 'demora atendimento',
+        'clinica', 'clínica', 'pronto socorro', 'pronto-socorro',
+        'cirurgia', 'internação', 'internacao', 'leito', 'maca'
+    ]
+    if any(p in texto_lower for p in palavras_saude):
+        return 'Saúde & Atendimento'
+    
+    # EDUCAÇÃO & ESCOLAS
+    palavras_educacao = [
+        'escola', 'creche', 'professor', 'professora', 'aluno', 'aluna',
+        'merenda', 'merendeira', 'diretor', 'diretora',
+        'matricula', 'matrícula', 'vaga escola', 'falta professor',
+        'aula', 'educação', 'educacao', 'ensino',
+        'biblioteca', 'quadra', 'pátio', 'uniforme',
+        'transporte escolar', 'van escolar', 'ônibus escolar'
+    ]
+    if any(p in texto_lower for p in palavras_educacao):
+        return 'Educação & Escolas'
+    
+    # TRANSPORTE & MOBILIDADE
+    palavras_transporte = [
+        'onibus', 'ônibus', 'transporte', 'ponto de onibus', 'ponto de ônibus',
+        'semaforo', 'semáforo', 'transito', 'trânsito', 'engarrafamento',
+        'ciclovia', 'bicicleta', 'pedestre', 'faixa', 'faixa de pedestres',
+        'estacionamento', 'vaga', 'uber', 'taxi', 'táxi',
+        'rua interditada', 'desvio', 'lombada', 'radar',
+        'passagem', 'tarifa', 'bilhete', 'cartão transporte'
+    ]
+    if any(p in texto_lower for p in palavras_transporte):
+        return 'Transporte & Mobilidade'
+    
+    # LIMPEZA URBANA
+    palavras_limpeza = [
+        'lixo', 'lixão', 'lixeira', 'coleta', 'coleta de lixo',
+        'reciclagem', 'entulho', 'descarte', 'caçamba',
+        'rato', 'ratos', 'barata', 'baratas', 'mosquito', 'inseto', 'escorpiao', 'escorpião',
+        'mau cheiro', 'mal cheiro', 'fedor', 'fedendo', 'podre',
+        'terreno baldio', 'terreno sujo',
+        'sujo', 'sujeira', 'imundície', 'nojento',
+        'varrição', 'varrição de rua', 'varredor', 'gari'
+    ]
+    if any(p in texto_lower for p in palavras_limpeza):
+        return 'Limpeza Urbana'
+
+    # MEIO AMBIENTE
+    palavras_meio_ambiente = [
+        'poda', 'árvore', 'arvore', 'galho', 'mato', 'mato alto', 'capina',
+        'praça', 'praca', 'parque', 'jardim',
+        'rio sujo', 'córrego', 'corrego', 'ribeirão', 'ribeirao', 'nascente',
+        'meio ambiente', 'queimada', 'desmatamento', 'poluição', 'poluicao',
+        'fumaca', 'fumaça', 'agrotóxico', 'agrotóxicos', 'agrotóxico', 'veneno',
+        'lençol freático', 'contaminação', 'contaminacao da agua',
+        'fauna', 'flora', 'animal silvestre', 'bueiro entupido'
+    ]
+    if any(p in texto_lower for p in palavras_meio_ambiente):
+        return 'Meio Ambiente'
+
+    # AGRICULTURA & RURAL
+    palavras_agricultura = [
+        'agricultura', 'agricola', 'agrícola', 'rural', 'zona rural',
+        'lavoura', 'plantação', 'plantacao', 'safra', 'colheita',
+        'soja', 'milho', 'trigo', 'mandioca', 'cana',
+        'trator', 'maquinário', 'maquinario', 'implemento',
+        'irrigação', 'irrigacao', 'seca', 'estiagem',
+        'estrada rural', 'estrada de terra', 'cascalhamento', 'cascalho',
+        'mata ciliar', 'erosão', 'erosao', 'produtor', 'produtor rural',
+        'cooperativa', 'emater', 'assistência técnica', 'assistencia tecnica',
+        'silageira', 'granja', 'pasto', 'gado', 'bovino', 'suino', 'suíno',
+        'pecuária', 'pecuaria', 'avicultura', 'aviário', 'aviario',
+        'defensivo', 'fertilizante', 'adubo'
+    ]
+    if any(p in texto_lower for p in palavras_agricultura):
+        return 'Agricultura \u0026 Rural'
+
+    # ASSISTÊNCIA SOCIAL
+    palavras_social = [
+        'cras', 'creas', 'assistência social', 'assistencia social',
+        'bolsa familia', 'bolsa família', 'cadastro unico', 'cadastro único',
+        'bpc', 'beneficio', 'benefício', 'vulnerável', 'vulneravel',
+        'morador de rua', 'sem teto', 'sem casa', 'família carente', 'familia carente',
+        'fome', 'cesta basica', 'cesta básica',
+        'idoso', 'idosa', 'deficiente', 'pcd', 'criança abandonada',
+        'violência doméstica', 'violencia domestica', 'mulher agredida',
+        'psicólogo', 'psicologo', 'psicossocial', 'acolhimento'
+    ]
+    if any(p in texto_lower for p in palavras_social):
+        return 'Assistência Social'
+
+    # INFRAESTRUTURA & OBRAS (padrão para problemas urbanos)
+    palavras_infra = [
+        'buraco', 'buracos', 'asfalto', 'pavimentação', 'pavimentacao',
+        'calçada', 'calcada', 'meio-fio', 'sarjeta', 'bueiro',
+        'poste', 'iluminação', 'iluminacao', 'luz', 'sem luz', 'lampada', 'lâmpada',
+        'vazamento', 'agua', 'água', 'esgoto', 'cano', 'encanamento',
+        'alagamento', 'alagado', 'enchente', 'inundação', 'inundacao',
+        'obra', 'obras', 'construção', 'construcao', 'reforma',
+        'ponte', 'viaduto', 'passarela', 'muro', 'cerca',
+        'quebrado', 'quebrou', 'danificado', 'estragado',
+        'fio', 'fiação', 'fiacao', 'curto', 'energia', 'falta de energia'
+    ]
+    if any(p in texto_lower for p in palavras_infra):
+        return 'Infraestrutura \u0026 Obras'
+    
+    # INFRAESTRUTURA como fallback (mais genérico para problemas urbanos)
+    return 'Infraestrutura \u0026 Obras'
+
+def classificar_regiao(texto):
+    """Classifica região/bairro da cidade"""
+    texto_lower = texto.lower()
+    
+    # Centro
+    if any(p in texto_lower for p in ['centro', 'praça central', 'praca central', 'prefeitura', 'câmara', 'camara', 'catedral']):
+        return 'Centro'
+    
+    # Zona Norte
+    if any(p in texto_lower for p in ['zona norte', 'norte', 'bairro norte']):
+        return 'Zona Norte'
+    
+    # Zona Sul
+    if any(p in texto_lower for p in ['zona sul', 'sul', 'bairro sul']):
+        return 'Zona Sul'
+    
+    # Zona Leste
+    if any(p in texto_lower for p in ['zona leste', 'leste', 'bairro leste']):
+        return 'Zona Leste'
+    
+    # Zona Oeste
+    if any(p in texto_lower for p in ['zona oeste', 'oeste', 'bairro oeste']):
+        return 'Zona Oeste'
+    
+    # Distrito Industrial
+    if any(p in texto_lower for p in ['distrito industrial', 'industrial', 'fábrica', 'fabrica', 'galpão', 'galpao']):
+        return 'Distrito Industrial'
+    
+    # Zona Rural
+    if any(p in texto_lower for p in ['zona rural', 'rural', 'fazenda', 'sítio', 'sitio', 'chácara', 'chacara', 'estrada de terra']):
+        return 'Zona Rural'
+    
+    # N/A (não identificado)
+    return 'N/A'
+
+def classificar_regiao(texto):
+    """Classifica regiao/bairro da cidade com a lista atual da prefeitura."""
+    texto_lower = texto.lower()
+    for region_name, keywords in REGION_KEYWORDS.items():
+        if any(keyword in texto_lower for keyword in keywords):
+            return region_name
+    return 'N/A'
+
+# --- AI CLASSIFICATION FALLBACK ---
+def classificar_com_ia(texto):
+    """Usa IA para classificar quando keywords retornam resultado genérico"""
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return None  # Sem chave, mantém classificação por keywords
+    
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key)
+        
+        prompt = f'''Classifique esta reclamação/feedback de um cidadão sobre serviços municipais.
+Texto: "{texto}"
+
+Responda APENAS em JSON com este formato exato:
+{{
+  "categoria": "Infraestrutura & Obras" | "Saúde & Atendimento" | "Educação & Escolas" | "Segurança Pública" | "Limpeza Urbana" | "Meio Ambiente" | "Agricultura & Rural" | "Assistência Social" | "Transporte & Mobilidade",
+  "sentimento": "Positivo" | "Critico" | "Urgente" | "Neutro",
+  "regiao": "Centro" | "Conjunto Dona Angelina" | "Conjunto João Guerreiro" | "Conjunto Bela Vista" | "Conjunto Santa Terezinha" | "Conjunto Bom Gosto" | "Conjunto Valdomiro Favero" | "Conjunto Jardim Bom Sucesso" | "Vila Rural Menino Jesus" | "Herculandia" | "Conjunto Eldorado" | "N/A"
+}}
+
+Regras de categoria:
+- Limpeza Urbana: lixo, coleta, entulho, pragas, varrição, sujeira urbana
+- Meio Ambiente: queimadas, desmatamento, rios/córregos, agrotóxicos, poluição
+- Agricultura & Rural: lavoura, gado, estradas rurais, EMATER, irrigação, tratores, chácara, sítio
+- Assistência Social: CRAS, bolsa família, vulnerabilidade, violência doméstica
+- Critico = emergências, risco de vida, desastres, violência
+- Urgente = problemas graves, serviços essenciais parados
+- Positivo = elogios, agradecimentos
+- Neutro = perguntas, sugestões'''
+        
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=100,
+            temperature=0  # Determinístico
+        )
+        
+        result_text = response.choices[0].message.content.strip()
+        # Limpa possíveis ```json``` wrappers
+        if result_text.startswith('```'):
+            result_text = result_text.split('```')[1]
+            if result_text.startswith('json'):
+                result_text = result_text[4:]
+        
+        return json.loads(result_text)
+    except Exception as e:
+        print(f"Erro IA classificação: {e}")
+        return None
+
+# --- AI RESPONSE FUNCTION (PERSONA: CLARA) ---
+def generate_ai_response(text, category, urgency, protocol_num):
+    """Gera resposta da Clara - atendente virtual da Prefeitura de Ivaté-PR"""
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return f"Olá! Sou a Clara, da Prefeitura de Ivaté. Recebi sua mensagem e registrei sua solicitação com o protocolo #{protocol_num}. Em breve nossa equipe entrará em contato."
+
+    is_critical = urgency in ['Critico', 'Crítico']
+    is_urgent = urgency == 'Urgente'
+    is_positive = urgency == 'Positivo'
+    is_complaint = not is_positive  # reclamação ou neutro
+
+    urgency_instruction = ''
+    if is_critical:
+        urgency_instruction = 'PRIORIDADE MÁXIMA: informe que a equipe foi acionada com urgência e, se for emergência de segurança/saúde, oriente a ligar 192 (SAMU) ou 193 (Bombeiros).'
+    elif is_urgent:
+        urgency_instruction = 'Mencione que a solicitação foi marcada como URGENTE e que a equipe responsável já foi notificada.'
+    elif is_positive:
+        urgency_instruction = 'É um elogio! Agradeça de coração pelo retorno positivo do cidadão.'
+    else:
+        urgency_instruction = 'Tom tranquilo e acolhedor. Confirme o registro e diga que a equipe irá analisar.'
+
+    emoji_rule = (
+        'NÃO use emojis. A situação é séria e o cidadão está insatisfeito.'
+        if is_complaint else
+        'Pode usar no máximo 1 emoji positivo (ex: 😊 ou ❤️) ao final.'
+    )
+
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key)
+
+        system_prompt = f"""Você é a Clara, atendente virtual da Prefeitura Municipal de Ivaté - PR.
+Sua missão é acolher o cidadão com empatia, eficiência e atenção aos detalhes.
+
+REGRAS ABSOLUTAS:
+- Escreva SOMENTE UMA resposta coesa. NUNCA divida em duas mensagens.
+- MÁXIMO 3 frases curtas.
+- Tom: humano, próximo, empático. Zero linguagem burocrática.
+- Mencione o protocolo #{protocol_num} de forma natural (ex: "registrei com o protocolo #...").
+- Categoria registrada: {category}.
+- {urgency_instruction}
+- {emoji_rule}
+
+SOBRE PERGUNTAS DE ACOMPANHAMENTO (muito importante):
+- Leia a mensagem com atenção e pergunte exatamente o que está faltando para resolver o caso.
+- Se a mensagem menciona um local genérico (ex: "no PAN", "na UBS", "na escola"), pergunte QUAL especificamente e EM QUAL BAIRRO.
+- Se menciona falta de produto/serviço (ex: remédio, merenda, água), pergunte QUAL produto/serviço está faltando E o local completo.
+- Se não menciona absolutamente nenhum local, pergunte o bairro ou a rua.
+- NUNCA pergunte só "bairro ou rua" quando há um local específico mencionado — seja contextual.
+- NUNCA mencione "Categoria classificada é" de forma robótica."""
+
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": text}
+            ],
+            max_tokens=130,
+            temperature=0.5
+        )
+
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        print(f"Erro ao gerar resposta da Clara: {e}")
+        return f"Olá! Sou a Clara, da Prefeitura de Ivaté. Recebi sua solicitação e abrimos o protocolo #{protocol_num}. Nossa equipe de {category} irá analisar. Poderia nos informar o local completo (bairro/rua)?"
+
+
+def send_whatsapp_message(remote_jid, message):
+    """Sends a text message using Evolution API."""
+    if not EVOLUTION_API_URL or not EVOLUTION_API_KEY or not EVOLUTION_INSTANCE_NAME:
+        print(f"❌ Evolution API not configured!")
+        return
+    
+    url = f"{EVOLUTION_API_URL}/message/sendText/{EVOLUTION_INSTANCE_NAME}"
+    headers = {
+        "apikey": EVOLUTION_API_KEY,
+        "Content-Type": "application/json"
+    }
+    payload = {"number": remote_jid, "text": message}
+    
+    print(f"📤 Sending WhatsApp reply to: {remote_jid}")
+    print(f"📤 URL: {url}")
+    print(f"📤 Message: {message}")
+    
+    try:
+        response = requests.post(url, json=payload, headers=headers, timeout=10)
+        print(f"📤 Response Status: {response.status_code}")
+        print(f"📤 Response Body: {response.text[:200]}")
+    except Exception as e:
+        print(f"❌ Error sending message: {e}")
+
+# --- AI CITY PULSE ---
+def generate_ai_pulse(feedbacks):
+    """Gera resumo inteligente da situação da cidade usando IA"""
+    api_key = os.getenv("OPENAI_API_KEY")
+    
+    if not api_key or not feedbacks:
+        return {"summary": "Aguardando feedbacks dos cidadãos para análise...", "status": "waiting"}
+    
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key)
+        
+        # Pegar últimos 50 feedbacks
+        recent = feedbacks[:50]
+        
+        # Contar sentimentos
+        sentimentos = Counter([f.get('urgency', 'Neutro') for f in recent])
+        categorias = Counter([f.get('category', 'Geral') for f in recent])
+        
+        # Montar contexto
+        feedback_list = "\n".join([
+            f"- [{f.get('urgency')}] {(get_feedback_preview(f.get('message', '')) or f.get('message', ''))[:80]}"
+            for f in recent[:20]
+        ])
+        
+        prompt = f'''Você é um analista de gestão municipal. Analise os feedbacks recentes dos cidadãos e gere um resumo MUITO CURTO (máximo 2 frases).
+
+DADOS:
+- Total feedbacks recentes: {len(recent)}
+- Sentimentos: {dict(sentimentos)}
+- Categorias: {dict(categorias)}
+
+Últimos feedbacks:
+{feedback_list}
+
+FORMATO DA RESPOSTA:
+1. Status geral (🟢 Cidade OK / 🟡 Atenção / 🔴 Crítico)
+2. Insight principal (o que mais se destaca nas reclamações)
+3. Sugestão rápida se houver problema
+
+Exemplo: "🟡 Atenção! Alta demanda em Infraestrutura. 3 reclamações sobre buracos na Zona Norte precisam de ação imediata."
+
+Seja MUITO conciso, máximo 150 caracteres.'''
+        
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=100,
+            temperature=0.7
+        )
+        
+        summary = response.choices[0].message.content.strip()
+        
+        # Determinar status baseado no resumo
+        if "🔴" in summary or "crítico" in summary.lower():
+            status = "critical"
+        elif "🟡" in summary or "atenção" in summary.lower():
+            status = "warning"
+        else:
+            status = "good"
+        
+        return {"summary": summary, "status": status}
+        
+    except Exception as e:
+        print(f"Erro AI Pulse: {e}")
+        return {"summary": "Não foi possível gerar análise.", "status": "error"}
+
+def generate_intelligence_panel(feedbacks):
+    """Gera um painel executivo de inteligência para a prefeitura."""
+    recent = feedbacks[:80]
+    valid = [fb for fb in recent if (fb.get('region') and fb.get('region') != 'N/A')]
+
+    total = len(recent)
+    open_count = sum(1 for fb in recent if fb.get('status', 'aberto') != 'resolvido')
+    resolved_count = sum(1 for fb in recent if fb.get('status') == 'resolvido')
+    critical_count = sum(1 for fb in recent if fb.get('urgency') in ['Critico', 'CrÃ­tico', 'Urgente'])
+
+    region_counter = Counter(fb.get('region', 'N/A') for fb in valid)
+    category_counter = Counter(fb.get('category', 'Geral') for fb in recent)
+    critical_by_region = Counter(
+        fb.get('region', 'N/A') for fb in valid if fb.get('urgency') in ['Critico', 'CrÃ­tico', 'Urgente']
+    )
+    critical_by_category = Counter(
+        fb.get('category', 'Geral') for fb in recent if fb.get('urgency') in ['Critico', 'CrÃ­tico', 'Urgente']
+    )
+
+    region_watch = []
+    for region, volume in region_counter.most_common(4):
+        if region == 'N/A':
+            continue
+        critical = critical_by_region.get(region, 0)
+        pressure = min(100, critical * 18 + volume * 7)
+        sample = next((get_feedback_preview(fb.get('message', '')) for fb in recent if fb.get('region') == region), '')
+        region_watch.append({
+            "region": region,
+            "volume": volume,
+            "critical": critical,
+            "pressure": pressure,
+            "reason": sample[:110] if sample else "Sem detalhe adicional"
+        })
+
+    category_watch = []
+    for category, volume in category_counter.most_common(4):
+        critical = critical_by_category.get(category, 0)
+        category_watch.append({
+            "category": category,
+            "volume": volume,
+            "critical": critical,
+            "insight": f"{critical} demandas sensÃ­veis em {volume} registros recentes" if critical else f"{volume} registros recentes nessa categoria"
+        })
+
+    top_problem = category_counter.most_common(1)[0][0] if category_counter else "Sem dados"
+    hottest_region = region_watch[0]["region"] if region_watch else "Sem dados"
+
+    fallback = {
+        "status": "warning" if critical_count else "good",
+        "executive_summary": f"A pressÃ£o atual estÃ¡ concentrada em {top_problem}, com maior atenÃ§Ã£o para {hottest_region}.",
+        "mayor_readout": f"{critical_count} demandas urgentes/crÃ­ticas pedem priorizaÃ§Ã£o, com {open_count} casos ainda abertos.",
+        "priorities": [
+            {
+                "title": f"Atuar em {top_problem}",
+                "urgency": "Alta" if critical_count else "Moderada",
+                "owner": "Secretaria responsÃ¡vel",
+                "reason": f"Ã‰ a categoria com maior volume recente ({category_counter.get(top_problem, 0)} registros)."
+            },
+            {
+                "title": f"Monitorar {hottest_region}",
+                "urgency": "Alta" if region_watch else "Moderada",
+                "owner": "Gabinete + secretaria local",
+                "reason": region_watch[0]["reason"] if region_watch else "Sem indÃ­cios regionais relevantes no momento."
+            }
+        ],
+        "region_watch": region_watch,
+        "category_watch": category_watch,
+        "opportunities": [
+            "Transformar elogios recorrentes em comunicaÃ§Ã£o institucional.",
+            "Cobrar atualizaÃ§Ã£o mais rÃ¡pida dos casos crÃ­ticos para reduzir pressÃ£o pÃºblica.",
+            "Usar o ranking por regiÃ£o para orientar agenda de gabinete e secretarias."
+        ],
+        "actions": [
+            "Abrir forÃ§a-tarefa nas categorias com maior volume.",
+            "Revisar backlog aberto por regiÃ£o.",
+            "Dar retorno pÃºblico dos casos crÃ­ticos resolvidos."
+        ],
+        "kpis": {
+            "open": open_count,
+            "resolved": resolved_count,
+            "critical": critical_count,
+            "coverage": total
+        }
+    }
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key or not recent:
+        return fallback
+
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key)
+
+        feedback_lines = []
+        for fb in recent[:30]:
+            preview = get_feedback_preview(fb.get('message', '')) or fb.get('message', '')
+            feedback_lines.append(
+                f"- [{fb.get('urgency', 'Neutro')}] {fb.get('category', 'Geral')} | {fb.get('region', 'N/A')} | {preview[:120]}"
+            )
+
+        prompt = f'''VocÃª Ã© um analista sÃªnior de gestÃ£o pÃºblica municipal.
+Analise os feedbacks recentes da Prefeitura de IvatÃ©-PR e produza uma leitura executiva objetiva para prefeito e secretÃ¡rios.
+
+DADOS ESTRUTURADOS:
+- Total analisado: {total}
+- Abertos/em andamento: {open_count}
+- Resolvidos: {resolved_count}
+- Urgentes/crÃ­ticos: {critical_count}
+- RegiÃµes mais citadas: {dict(region_counter.most_common(6))}
+- Categorias mais citadas: {dict(category_counter.most_common(6))}
+- Categorias sensÃ­veis: {dict(critical_by_category.most_common(6))}
+
+FEEDBACKS RECENTES:
+{chr(10).join(feedback_lines)}
+
+Responda APENAS em JSON vÃ¡lido com esta estrutura:
+{{
+  "status": "good" | "warning" | "critical",
+  "executive_summary": "texto curto",
+  "mayor_readout": "texto curto para prefeito",
+  "priorities": [
+    {{"title": "...", "urgency": "Alta|MÃ©dia|Baixa", "owner": "...", "reason": "..."}}
+  ],
+  "region_watch": [
+    {{"region": "...", "volume": 0, "critical": 0, "pressure": 0, "reason": "..."}}
+  ],
+  "category_watch": [
+    {{"category": "...", "volume": 0, "critical": 0, "insight": "..."}}
+  ],
+  "opportunities": ["...", "...", "..."],
+  "actions": ["...", "...", "..."]
+}}
+
+Regras:
+- Seja concreto e acionÃ¡vel.
+- NÃ£o invente dados fora do contexto.
+- Foque em risco operacional, pressÃ£o territorial, gargalos e oportunidade de comunicaÃ§Ã£o pÃºblica.
+- No mÃ¡ximo 3 prioridades, 4 regiÃµes, 4 categorias, 3 oportunidades e 3 aÃ§Ãµes.
+'''
+
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=900,
+            temperature=0.3
+        )
+        result_text = response.choices[0].message.content.strip()
+        if result_text.startswith('```'):
+            result_text = result_text.split('```')[1]
+            if result_text.startswith('json'):
+                result_text = result_text[4:]
+        parsed = json.loads(result_text)
+        parsed["kpis"] = {
+            "open": open_count,
+            "resolved": resolved_count,
+            "critical": critical_count,
+            "coverage": total
+        }
+        return parsed
+    except Exception as e:
+        print(f"Erro painel inteligencia: {e}")
+        return fallback
+
+# --- SPAM PROTECTION ---
+
+# Rate Limiter: max messages per sender in a time window
+rate_limit_store = defaultdict(list)  # {remoteJid: [timestamps]}
+RATE_LIMIT_MAX = 3        # max messages per window
+RATE_LIMIT_WINDOW = 600   # 10 minutes (in seconds)
+
+def is_rate_limited(remote_jid):
+    """Verifica se o número excedeu o limite de mensagens"""
+    now = time_now()
+    # Remove timestamps fora da janela
+    rate_limit_store[remote_jid] = [t for t in rate_limit_store[remote_jid] if now - t < RATE_LIMIT_WINDOW]
+    # Verifica limite
+    if len(rate_limit_store[remote_jid]) >= RATE_LIMIT_MAX:
+        return True
+    rate_limit_store[remote_jid].append(now)
+    return False
+
+def is_emoji_only(text):
+    """Verifica se a mensagem contém apenas emojis (sem texto real)"""
+    emoji_pattern = re.compile(
+        "["
+        "\U0001F600-\U0001F64F"  # emoticons
+        "\U0001F300-\U0001F5FF"  # symbols & pictographs
+        "\U0001F680-\U0001F6FF"  # transport & map
+        "\U0001F1E0-\U0001F1FF"  # flags
+        "\U00002702-\U000027B0"  # dingbats
+        "\U000024C2-\U0001F251"  # enclosed characters
+        "\U0001F900-\U0001F9FF"  # supplemental symbols
+        "\U0001FA00-\U0001FA6F"  # chess symbols
+        "\U0001FA70-\U0001FAFF"  # symbols extended
+        "\U00002600-\U000026FF"  # misc symbols
+        "\U0000FE00-\U0000FE0F"  # variation selectors
+        "\U0000200D"             # zero width joiner
+        "\U00002764"             # heart
+        "\U0000FE0F"             # variation selector
+        "]+", flags=re.UNICODE
+    )
+    cleaned = emoji_pattern.sub('', text).strip()
+    return len(cleaned) == 0
+
+MIN_MESSAGE_LENGTH = 3  # Mínimo de caracteres para processar
+
+# --- ROUTES ---
+
+@app.route("/")
+def index():
+    return render_template("data_node.html")
+
+@app.route("/api/events")
+def get_events():
+    feedbacks = get_feedbacks()
+    
+    # Filtros via query params
+    categoria = request.args.get('categoria')
+    regiao = request.args.get('regiao')
+    prioridade = request.args.get('prioridade')
+    status_filter = request.args.get('status')
+    
+    if categoria:
+        feedbacks = [f for f in feedbacks if f.get('category') == categoria]
+    if regiao:
+        feedbacks = [f for f in feedbacks if f.get('region') == regiao]
+    if prioridade:
+        feedbacks = [f for f in feedbacks if f.get('urgency') == prioridade]
+    if status_filter:
+        feedbacks = [f for f in feedbacks if f.get('status', 'aberto') == status_filter]
+    
+    return jsonify([serialize_feedback_for_api(feedback) for feedback in feedbacks])
+
+# Cache para AI Pulse (evita chamadas excessivas)
+ai_pulse_cache = {"data": None, "timestamp": None}
+intelligence_cache = {"data": None, "timestamp": None}
+
+@app.route("/api/ai-pulse")
+def get_ai_pulse():
+    """Retorna resumo inteligente da cidade via IA"""
+    global ai_pulse_cache
+    
+    # Verificar cache (válido por 60 segundos)
+    now = datetime.utcnow()
+    if ai_pulse_cache["data"] and ai_pulse_cache["timestamp"]:
+        cache_age = (now - ai_pulse_cache["timestamp"]).total_seconds()
+        if cache_age < 60:
+            return jsonify(ai_pulse_cache["data"])
+    
+    # Gerar novo resumo
+    feedbacks = get_feedbacks()
+    result = generate_ai_pulse(feedbacks)
+    result["updated_at"] = now.isoformat()
+    result["feedbacks_count"] = len(feedbacks)
+    
+    # Atualizar cache
+    ai_pulse_cache = {"data": result, "timestamp": now}
+    
+    return jsonify(result)
+
+@app.route("/api/intelligence")
+def get_intelligence():
+    global intelligence_cache
+    now = datetime.utcnow()
+    if intelligence_cache["data"] and intelligence_cache["timestamp"]:
+        cache_age = (now - intelligence_cache["timestamp"]).total_seconds()
+        if cache_age < 60:
+            return jsonify(intelligence_cache["data"])
+
+    feedbacks = get_feedbacks()
+    result = generate_intelligence_panel(feedbacks)
+    result["updated_at"] = now.isoformat()
+    result["feedbacks_count"] = len(feedbacks)
+    intelligence_cache = {"data": result, "timestamp": now}
+    return jsonify(result)
+
+@app.route("/api/export/csv")
+def export_csv():
+    """Exporta feedbacks como CSV para download"""
+    feedbacks = get_feedbacks()
+    
+    output = StringIO()
+    writer = csv.DictWriter(output, fieldnames=['id', 'message', 'category', 'urgency', 'timestamp', 'status', 'sender', 'name', 'region'])
+    writer.writeheader()
+    
+    for fb in feedbacks:
+        writer.writerow({
+            'id': fb.get('id'),
+            'message': get_feedback_customer_text(fb.get('message', '')) or fb.get('message'),
+            'category': fb.get('category'),
+            'urgency': fb.get('urgency'),
+            'timestamp': fb.get('timestamp'),
+            'status': fb.get('status', 'aberto'),
+            'sender': fb.get('sender'),
+            'name': fb.get('name'),
+            'region': fb.get('region')
+        })
+    
+    output.seek(0)
+    return output.getvalue(), 200, {
+        'Content-Type': 'text/csv; charset=utf-8',
+        'Content-Disposition': 'attachment; filename=feedbacks_prefeitura.csv'
+    }
+
+@app.route("/api/export/json")
+def export_json():
+    """Exporta feedbacks como JSON para download"""
+    feedbacks = get_feedbacks()
+    return jsonify(feedbacks), 200, {
+        'Content-Disposition': 'attachment; filename=feedbacks_prefeitura.json'
+    }
+
+@app.route("/api/config", methods=["GET"])
+def get_config_route():
+    """Retorna config com contagens calculadas dinamicamente dos feedbacks"""
+    config = get_config()
+    feedbacks = get_feedbacks()
+    
+    # Contar feedbacks por categoria
+    category_counts = {}
+    region_counts = {}
+    
+    for fb in feedbacks:
+        cat = fb.get('category', '')
+        reg = fb.get('region', '')
+        
+        if cat:
+            category_counts[cat] = category_counts.get(cat, 0) + 1
+        if reg and reg != 'N/A':
+            region_counts[reg] = region_counts.get(reg, 0) + 1
+    
+    # Atualizar contagens nas categorias
+    for cat in config.get('categories', []):
+        cat['count'] = category_counts.get(cat['name'], 0)
+    
+    # Atualizar contagens nas regiões
+    for reg in config.get('regions', []):
+        reg['count'] = region_counts.get(reg['name'], 0)
+    
+    return jsonify(config)
+
+@app.route("/api/insights")
+def get_insights():
+    """Retorna Top 3 Elogios e Problemas"""
+    feedbacks = get_feedbacks()
+    
+    elogios = {}
+    problemas = {}
+    
+    for fb in feedbacks:
+        texto = get_feedback_customer_text(fb.get('message', '')) or fb.get('text', '')
+        sentimento = fb.get('urgency', 'Neutro')
+        categoria = fb.get('category', 'Outros')
+        topic = fb.get('topic', texto[:20] + '...')
+        
+        display_text = topic if topic != 'Geral' else texto
+
+        # Agrupar elogios
+        if sentimento == 'Positivo':
+            if display_text not in elogios:
+                elogios[display_text] = {'count': 0, 'topic': display_text}
+            elogios[display_text]['count'] += 1
+        
+        # Agrupar problemas
+        if sentimento in ['Critico', 'Urgente', 'Crítico']:
+            if display_text not in problemas:
+                problemas[display_text] = {'count': 0, 'topic': display_text}
+            problemas[display_text]['count'] += 1
+    
+    top_elogios = [v for k, v in sorted(elogios.items(), key=lambda x: x[1]['count'], reverse=True)[:3]]
+    top_problemas = [v for k, v in sorted(problemas.items(), key=lambda x: x[1]['count'], reverse=True)[:3]]
+    
+    return jsonify({
+        'top_elogios': top_elogios,
+        'top_problemas': top_problemas
+    })
+
+@app.route("/api/analytics/top")
+def get_top_analytics():
+    """Returns data in the format data_node.html expects"""
+    res = get_insights().get_json()
+    return jsonify({
+        "compliments": res['top_elogios'],
+        "problems": res['top_problemas']
+    })
+
+
+# --- HELPER: GET ACTIVE FEEDBACK ---
+def get_active_feedback(remote_jid):
+    """Verifica se existe um chamado Aberto ou Em Andamento para este número"""
+    sb = get_supabase()
+    if not sb:
+        return None
+    
+    try:
+        response = sb.table('feedbacks')\
+            .select("*")\
+            .eq('sender', remote_jid)\
+            .in_('status', ['aberto', 'em_andamento'])\
+            .order('id', desc=True)\
+            .limit(1)\
+            .execute()
+            
+        if response.data and len(response.data) > 0:
+            return response.data[0]
+        return None
+    except Exception as e:
+        print(f"Erro ao buscar feedback ativo (sender): {e}")
+        sb = _reconnect_supabase()
+        if sb:
+            try:
+                response = sb.table('feedbacks')\
+                    .select("*")\
+                    .eq('sender', remote_jid)\
+                    .in_('status', ['aberto', 'em_andamento'])\
+                    .order('id', desc=True)\
+                    .limit(1)\
+                    .execute()
+                if response.data and len(response.data) > 0:
+                    return response.data[0]
+            except Exception as e2:
+                print(f"Supabase retry get_active_feedback failed: {e2}")
+        return None
+
+def append_to_feedback(feedback_id, old_message, new_content, new_region=None, new_urgency=None, new_sentiment=None, new_category=None):
+    """Adiciona mensagem ao feedback existente e atualiza região/urgência/categoria se necessário"""
+    sb = get_supabase()
+    if not sb:
+        return False
+        
+    try:
+        # Embed Brasília timestamp (UTC-3) so the frontend can display per-bubble time
+        from datetime import timezone, timedelta
+        tz_brt = timezone(timedelta(hours=-3))
+        hora_local = datetime.now(tz_brt).strftime('%H:%M')
+        updated_message = f"{old_message}\n\n[Atualização {hora_local}]: {new_content}"
+        data = {'message': updated_message, 'updated_at': datetime.utcnow().isoformat()}
+        
+        if new_region and new_region != "N/A":
+             data['region'] = new_region
+             
+        if new_urgency:
+             data['urgency'] = new_urgency
+        
+        if new_sentiment:
+             data['sentiment'] = new_sentiment
+
+        if new_category and new_category != "Geral" and new_category != "N/A":
+             data['category'] = new_category
+             
+        sb.table('feedbacks').update(data).eq('id', feedback_id).execute()
+        print(f"✅ Feedback {feedback_id} atualizado com sucesso.")
+        return True
+    except Exception as e:
+        print(f"❌ Erro ao atualizar feedback {feedback_id}: {e}")
+        sb = _reconnect_supabase()
+        if sb:
+            try:
+                sb.table('feedbacks').update(data).eq('id', feedback_id).execute()
+                return True
+            except:
+                pass
+        return False
+
+def append_to_feedback(feedback_id, old_message, new_content, new_region=None, new_urgency=None, new_sentiment=None, new_category=None):
+    """Versao estruturada do append para manter a conversa completa no mesmo feedback."""
+    sb = get_supabase()
+    if not sb:
+        return False
+
+    updated_message = append_conversation_entry(old_message, 'client', new_content)
+    data = {'message': updated_message, 'updated_at': datetime.utcnow().isoformat()}
+
+    if new_region and new_region != "N/A":
+        data['region'] = new_region
+    if new_urgency:
+        data['urgency'] = new_urgency
+    if new_sentiment:
+        data['sentiment'] = new_sentiment
+    if new_category and new_category != "Geral" and new_category != "N/A":
+        data['category'] = new_category
+
+    try:
+        sb.table('feedbacks').update(data).eq('id', feedback_id).execute()
+        return True
+    except Exception as e:
+        print(f"Erro ao atualizar feedback estruturado {feedback_id}: {e}")
+        sb = _reconnect_supabase()
+        if sb:
+            try:
+                sb.table('feedbacks').update(data).eq('id', feedback_id).execute()
+                return True
+            except Exception:
+                pass
+        return False
+
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    try:
+        data = request.json
+    except Exception:
+        return jsonify({"error": "invalid_json"}), 400
+    
+    try:
+        event_type = data.get("type") or data.get("event")
+        
+        if event_type in ["message", "messages.upsert", "MESSAGES_UPSERT"]:
+            msg_data = data.get("data", {})
+            print(f"DEBUG [Prefeitura]: Incoming event {event_type}")
+            print(f"DEBUG [Prefeitura]: Payload message keys: {list(msg_data.get('message', {}).keys())}")
+            
+            key = msg_data.get("key", {})
+            
+            if key.get("fromMe"):
+                return jsonify({"status": "ignored_self"}), 200
+
+            remote_jid = key.get("remoteJid")
+            push_name = msg_data.get("pushName", "Cidadão")
+            message_content = msg_data.get("message", {})
+            
+            text = message_content.get("conversation") or message_content.get("extendedTextMessage", {}).get("text")
+            native_transcription = message_content.get("transcription")
+            audio_msg = message_content.get("audioMessage")
+            
+            # Audio Processing
+            if not text and audio_msg and remote_jid:
+                seconds = audio_msg.get("seconds", 0)
+                if seconds > 35:
+                    print(f"[AUDIO] Ignored too long: {seconds}s")
+                    send_whatsapp_message(remote_jid, "⚠️ O seu áudio é muito longo. Por favor, envie áudios de no máximo 35 segundos para que eu possa processar.")
+                    return jsonify({"status": "audio_too_long"}), 200
+                
+                if native_transcription:
+                    print(f"[AUDIO] Using native transcription from Evolution: {native_transcription}")
+                    text = native_transcription
+                else:
+                    print(f"[AUDIO] Manual transcription required for {seconds}s audio...")
+                    import base64
+                    audio_data = None
+                    if "base64" in message_content:
+                        print(f"[AUDIO] Found base64 in message_content")
+                        try:
+                            audio_data = base64.b64decode(message_content["base64"])
+                        except Exception as e:
+                            print(f"❌ Error decoding base64 from message_content: {e}")
+                    if not audio_data and "base64" in msg_data:
+                        print(f"[AUDIO] Found base64 in msg_data")
+                        try:
+                            audio_data = base64.b64decode(msg_data["base64"])
+                        except Exception as e:
+                            print(f"❌ Error decoding base64 from msg_data: {e}")
+                    if not audio_data:
+                        print(f"[AUDIO] No base64 found, attempting download...")
+                        audio_data = download_evolution_media(remote_jid, msg_data.get("key", {}).get("id"))
+                    if audio_data:
+                        print(f"[AUDIO] Audio data ready ({len(audio_data)} bytes). Starting Whisper...")
+                        text = transcribe_audio(audio_data)
+                        if not text:
+                            print(f"❌ Whisper transcription returned None")
+                            send_whatsapp_message(remote_jid, "❌ Não consegui transcrever seu áudio no momento. Tente novamente ou digite sua mensagem.")
+                            return jsonify({"status": "transcription_failed"}), 200
+                    else:
+                        print(f"❌ Media download failed from Evolution")
+                        send_whatsapp_message(remote_jid, "❌ Erro ao baixar o áudio para transcrição. Verifique a configuração da Evolution API.")
+                        return jsonify({"status": "download_failed"}), 200
+
+            if text and remote_jid:
+                restriction = get_active_restriction(remote_jid)
+                if restriction:
+                    send_whatsapp_message(remote_jid, restriction["reply"])
+                    return jsonify({"status": restriction["status"]}), 200
+
+                if len(text.strip()) < MIN_MESSAGE_LENGTH:
+                    print(f"[SPAM] Message too short ({len(text)} chars): {text}")
+                    return jsonify({"status": "ignored_too_short"}), 200
+                if is_emoji_only(text):
+                    print(f"[SPAM] Emoji-only message ignored: {text}")
+                    return jsonify({"status": "ignored_emoji_only"}), 200
+                abuse = analyze_abuse_message(text)
+                if abuse["score"] > 0:
+                    moderation = register_moderation_infraction(
+                        remote_jid,
+                        text,
+                        abuse["reasons"],
+                        abuse["score"],
+                        severe=abuse["severe"]
+                    )
+                    send_whatsapp_message(remote_jid, moderation["reply"])
+                    return jsonify({"status": moderation["status"]}), 200
+                if is_rate_limited(remote_jid):
+                    print(f"[RATE-LIMIT] {remote_jid} exceeded {RATE_LIMIT_MAX} msgs in {RATE_LIMIT_WINDOW}s")
+                    moderation = register_moderation_infraction(
+                        remote_jid,
+                        text,
+                        ["spam"],
+                        2,
+                        severe=False
+                    )
+                    send_whatsapp_message(remote_jid, moderation["reply"])
+                    return jsonify({"status": "rate_limited"}), 200
+                
+                feedbacks = get_feedbacks()
+                msg_hash = hashlib.md5(f"{text}{remote_jid}".encode()).hexdigest()
+                existing_hashes = {
+                    hashlib.md5(
+                        f"{get_feedback_customer_text(fb.get('message', '')) or fb.get('message', '')}{fb.get('sender', '')}".encode()
+                    ).hexdigest()
+                    for fb in feedbacks
+                }
+                if msg_hash in existing_hashes:
+                    print(f"[CACHE] Ignored Duplicate: {text}")
+                    return jsonify({"status": "ignored_duplicate"}), 200
+                
+                # --- SMART THREADING LOGIC ---
+                active_feedback = get_active_feedback(remote_jid)
+                linked_from_id = None
+
+                # Fluxo especial: Clara pediu rua/bairro e o cidadao respondeu.
+                # Nessa etapa nunca deve abrir card novo.
+                if active_feedback:
+                    waiting_for_location = is_waiting_for_location(active_feedback.get('message', ''))
+                    if waiting_for_location:
+                        has_street, has_neighborhood, detected_region = detect_location_components(text)
+                        update_region = None
+                        current_region = active_feedback.get('region', 'N/A')
+                        if current_region and current_region != 'N/A':
+                            has_neighborhood = True
+                        if (not current_region or current_region == 'N/A') and (detected_region and detected_region != 'N/A'):
+                            update_region = detected_region
+
+                        append_to_feedback(
+                            active_feedback['id'],
+                            active_feedback['message'],
+                            text,
+                            update_region,
+                            None,
+                            None,
+                            None
+                        )
+
+                        reply = build_location_followup_reply(has_street, has_neighborhood)
+                        send_whatsapp_message(remote_jid, reply)
+                        current_message = append_conversation_entry(active_feedback['message'], 'client', text)
+                        record_agent_reply(active_feedback['id'], current_message, reply)
+                        return jsonify({"status": "updated_existing_location"}), 200
+
+                # --- CLASSIFY FIRST (needed for smart threading) ---
+                print(f"Processing Report: {text}")
+                ia_result = classificar_com_ia(text)
+                if ia_result:
+                    sentimento = ia_result.get('sentimento', 'Neutro')
+                    categoria = ia_result.get('categoria', 'Infraestrutura & Obras')
+                    regiao = ia_result.get('regiao', 'N/A')
+                else:
+                    sentimento = classificar_sentimento(text)
+                    categoria = classificar_categoria(text)
+                    regiao = classificar_regiao(text)
+
+                if active_feedback:
+                    old_category = (active_feedback.get('category') or '').strip().lower()
+                    new_category = (categoria or '').strip().lower()
+                    same_category = old_category == new_category
+
+                    if same_category:
+                        # MESMA CATEGORIA → append ao card existente
+                        print(f"[THREADING] Same category '{categoria}' — appending to feedback {active_feedback.get('id')}")
+                        
+                        new_region = regiao
+                        current_region = active_feedback.get('region', 'N/A')
+                        update_region = None
+                        if (not current_region or current_region == 'N/A') and (new_region and new_region != 'N/A'):
+                            update_region = new_region
+                        
+                        current_urgency = active_feedback.get('urgency', 'Neutro')
+                        update_urgency = None
+                        update_sentiment = None
+                        priority_map = {"Critico": 3, "Urgente": 2, "Positivo": 1, "Neutro": 0}
+                        if priority_map.get(sentimento, 0) > priority_map.get(current_urgency, 0):
+                            update_urgency = sentimento
+                            update_sentiment = "Positivo" if sentimento == "Positivo" else ("Negativo" if sentimento in ["Critico", "Urgente"] else "Neutro")
+                        
+                        append_to_feedback(active_feedback['id'], active_feedback['message'], text, update_region, update_urgency, update_sentiment, None)
+
+                        try:
+                            from openai import OpenAI
+                            client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+                            urgency_note = 'A prioridade do chamado foi elevada.' if update_urgency in ['Critico', 'Urgente'] else ''
+                            reply_prompt = f"""Você é a Clara, atendente da Prefeitura de Ivaté - PR.
+O cidadão já tem um chamado aberto. Ele enviou uma nova mensagem adicional.
+MENSAGEM: "{text}"
+{urgency_note}
+Escreva UMA resposta amigável e curta (máx. 3 frases) confirmando que a informação foi adicionada ao chamado.
+Tom: próximo, humano, sem burocracia."""
+                            resp = client.chat.completions.create(
+                                model="gpt-4o-mini",
+                                messages=[{"role": "system", "content": reply_prompt}],
+                                max_tokens=100,
+                                temperature=0.6,
+                                timeout=15
+                            )
+                            reply = resp.choices[0].message.content.strip()
+                        except Exception as e:
+                            print(f"Erro na resposta de threading: {e}")
+                            reply = "Já adicionei essa informação ao seu chamado. A equipe será informada."
+
+                        send_whatsapp_message(remote_jid, reply)
+                        current_message = append_conversation_entry(active_feedback['message'], 'client', text)
+                        record_agent_reply(active_feedback['id'], current_message, reply)
+                        return jsonify({"status": "updated_existing"}), 200
+                    else:
+                        # CATEGORIA DIFERENTE → criar card novo, linkado ao anterior
+                        print(f"[THREADING] Category changed '{old_category}' → '{categoria}' — creating NEW card linked to {active_feedback.get('id')}")
+                        linked_from_id = active_feedback.get('id')
+                # --- FIM SMART THREADING ---
+                
+                topic = "Geral"
+                text_lower = text.lower()
+                if categoria != 'Infraestrutura & Obras' or sentimento != 'Neutro':
+                    topic = f"{categoria}"
+                    if "buraco" in text_lower: topic = "Buraco na Via"
+                    elif "lixo" in text_lower: topic = "Lixo/Sujeira"
+                    elif "esgoto" in text_lower: topic = "Esgoto"
+                    elif "iluminação" in text_lower or "luz" in text_lower: topic = "Iluminação"
+                    elif "onibus" in text_lower or "ônibus" in text_lower: topic = "Ônibus"
+                    elif "escola" in text_lower: topic = "Escola"
+                    elif "posto" in text_lower or "ubs" in text_lower: topic = "Saúde"
+                    elif "segurança" in text_lower or "assalto" in text_lower: topic = "Segurança"
+                else:
+                    topic = text if len(text.split()) <= 3 else text[:20] + "..."
+
+                now = datetime.utcnow()
+                current_id = get_next_id()
+                current_year = datetime.now().year
+                protocol_num = f"{current_year}{current_id:04d}"
+
+                new_report = {
+                    "id": current_id,
+                    "sender": remote_jid,
+                    "name": push_name,
+                    "message": build_feedback_message(text, now.isoformat()),
+                    "timestamp": now.isoformat(),
+                    "updated_at": now.isoformat(),
+                    "category": categoria,
+                    "region": regiao,
+                    "urgency": sentimento,
+                    "sentiment": "Positivo" if sentimento == "Positivo" else ("Negativo" if sentimento in ["Critico", "Urgente"] else "Neutro"),
+                    "topic": topic,
+                    "status": "aberto"
+                }
+                if linked_from_id:
+                    new_report["linked_from"] = linked_from_id
+
+                # Save feedback FIRST (before AI response to avoid data loss)
+                save_feedback(new_report)
+                
+                # Reply (AI Generated) — wrapped so failure doesn't lose saved data
+                try:
+                    reply = generate_ai_response(text, categoria, sentimento, protocol_num)
+                    send_whatsapp_message(remote_jid, reply)
+                    record_agent_reply(current_id, new_report['message'], reply)
+                except Exception as e:
+                    print(f"❌ [WEBHOOK] AI reply failed: {e}")
+                    send_whatsapp_message(remote_jid, f"Recebi sua solicitação! Protocolo #{protocol_num}. Nossa equipe irá analisar.")
+                
+                return jsonify({"status": "processed", "protocol": protocol_num}), 200
+
+        return jsonify({"status": "ignored"}), 200
+
+    except Exception as e:
+        print(f"❌❌ [WEBHOOK CRITICAL] Unhandled error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route("/api/feedback/<int:feedback_id>/status", methods=["PUT"])
+def update_feedback_status(feedback_id):
+    """Atualiza o status de um feedback"""
+    data = request.json
+    new_status = data.get('status')
+    
+    if new_status not in ['aberto', 'em_andamento', 'resolvido']:
+        return jsonify({"error": "Status inválido"}), 400
+    
+    updates = {'status': new_status}
+    if new_status == 'resolvido':
+        updates['resolved_at'] = datetime.utcnow().isoformat()
+    else:
+        updates['resolved_at'] = None
+    
+    if update_feedback(feedback_id, updates):
+        return jsonify({"success": True, "status": new_status})
+    else:
+        return jsonify({"error": "Feedback não encontrado"}), 404
+
+@app.route("/api/debug")
+def debug_env():
+    """Endpoint para verificar variáveis de ambiente"""
+    return jsonify({
+        "status": "online",
+        "app": "Prefeitura Node Data",
+        "env_check": {
+            "SUPABASE_URL": "OK" if os.getenv("SUPABASE_URL") else "MISSING",
+            "SUPABASE_KEY": "OK" if os.getenv("SUPABASE_KEY") else "MISSING",
+            "OPENAI_API_KEY": "OK" if os.getenv("OPENAI_API_KEY") else "MISSING",
+            "EVOLUTION_API_URL": os.getenv("EVOLUTION_API_URL", "MISSING"),
+            "EVOLUTION_INSTANCE": os.getenv("EVOLUTION_INSTANCE_NAME", "MISSING"),
+            "EVOLUTION_KEY_SET": "YES" if os.getenv("EVOLUTION_API_KEY") else "NO"
+        }
+    })
+
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", 5002))
+    print(f"🏛️ Prefeitura Node Data running on port {port}")
+    if supabase:
+        print("📦 Using Supabase database")
+    else:
+        print("📁 Using local JSON files")
+    app.run(host="0.0.0.0", port=port)
