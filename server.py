@@ -523,6 +523,15 @@ def responder_consulta_protocolo(remote_jid: str, text: str) -> dict | None:
     if not protocol_num:
         return None
 
+    # Rate limit de consultas de protocolo (3 por hora)
+    if is_protocol_query_limited(remote_jid):
+        send_whatsapp_message(
+            remote_jid,
+            "Você já consultou protocolos várias vezes recentemente. "
+            "Aguarde um pouco antes de consultar novamente."
+        )
+        return {"status": "protocol_query_limited", "handled": True}
+
     feedback = buscar_feedback_por_protocolo(protocol_num)
     if not feedback:
         send_whatsapp_message(
@@ -531,6 +540,16 @@ def responder_consulta_protocolo(remote_jid: str, text: str) -> dict | None:
             f"Verifique o número e tente novamente."
         )
         return {"status": "protocol_not_found", "handled": True}
+
+    # Validação de dono: só mostra detalhes se o protocolo pertence ao mesmo número
+    feedback_sender = feedback.get('sender', '')
+    if feedback_sender != remote_jid:
+        send_whatsapp_message(
+            remote_jid,
+            f"O protocolo #{protocol_num} não está vinculado ao seu número. "
+            f"Você só pode consultar protocolos abertos pelo seu WhatsApp."
+        )
+        return {"status": "protocol_wrong_owner", "handled": True}
 
     status = feedback.get('status', 'aberto')
     status_label = STATUS_LABELS.get(status, status)
@@ -1975,16 +1994,55 @@ rate_limit_store = defaultdict(list)  # {remoteJid: [timestamps]}
 RATE_LIMIT_MAX = 20       # max messages por janela (conversas multi-turno são normais)
 RATE_LIMIT_WINDOW = 600   # 10 minutes (in seconds)
 
+# Limite diário: max mensagens por número por dia
+daily_limit_store = defaultdict(list)  # {remoteJid: [timestamps]}
+DAILY_LIMIT_MAX = 30
+DAILY_LIMIT_WINDOW = 86400  # 24 horas em segundos
+
+# Limite de caracteres por mensagem
+MAX_MESSAGE_LENGTH = 600  # ~10 linhas de texto
+
+# Rate limit para consultas de protocolo
+protocol_query_store = defaultdict(list)  # {remoteJid: [timestamps]}
+PROTOCOL_QUERY_MAX = 3
+PROTOCOL_QUERY_WINDOW = 3600  # 1 hora
+
+
 def is_rate_limited(remote_jid):
-    """Verifica se o número excedeu o limite de mensagens"""
+    """Verifica se o número excedeu o limite de mensagens por janela."""
     now = time_now()
-    # Remove timestamps fora da janela
     rate_limit_store[remote_jid] = [t for t in rate_limit_store[remote_jid] if now - t < RATE_LIMIT_WINDOW]
-    # Verifica limite
     if len(rate_limit_store[remote_jid]) >= RATE_LIMIT_MAX:
         return True
     rate_limit_store[remote_jid].append(now)
     return False
+
+
+def is_daily_limited(remote_jid):
+    """Verifica se o número excedeu o limite diário de 30 mensagens."""
+    now = time_now()
+    daily_limit_store[remote_jid] = [t for t in daily_limit_store[remote_jid] if now - t < DAILY_LIMIT_WINDOW]
+    if len(daily_limit_store[remote_jid]) >= DAILY_LIMIT_MAX:
+        return True
+    daily_limit_store[remote_jid].append(now)
+    return False
+
+
+def is_protocol_query_limited(remote_jid):
+    """Verifica se o número excedeu o limite de consultas de protocolo (3/hora)."""
+    now = time_now()
+    protocol_query_store[remote_jid] = [t for t in protocol_query_store[remote_jid] if now - t < PROTOCOL_QUERY_WINDOW]
+    if len(protocol_query_store[remote_jid]) >= PROTOCOL_QUERY_MAX:
+        return True
+    protocol_query_store[remote_jid].append(now)
+    return False
+
+
+def truncar_mensagem(text: str) -> tuple[str, bool]:
+    """Trunca mensagem se exceder MAX_MESSAGE_LENGTH. Retorna (texto, foi_truncado)."""
+    if not text or len(text) <= MAX_MESSAGE_LENGTH:
+        return text, False
+    return text[:MAX_MESSAGE_LENGTH], True
 
 def is_emoji_only(text):
     """Verifica se a mensagem contém apenas emojis (sem texto real)"""
@@ -2539,10 +2597,18 @@ def webhook():
                     return jsonify({"status": moderation["status"]}), 200
                 if is_rate_limited(remote_jid):
                     print(f"[RATE-LIMIT] {mascarar_telefone(remote_jid)} exceeded {RATE_LIMIT_MAX} msgs in {RATE_LIMIT_WINDOW}s")
-                    # Não registra como abuso — rate limit é proteção técnica, não comportamental
                     send_whatsapp_message(remote_jid, "Recebi muitas mensagens em seguida. Aguarde um momento e tente novamente.")
                     return jsonify({"status": "rate_limited"}), 200
-                
+                if is_daily_limited(remote_jid):
+                    print(f"[DAILY-LIMIT] {mascarar_telefone(remote_jid)} exceeded {DAILY_LIMIT_MAX} msgs today")
+                    send_whatsapp_message(remote_jid, "Você atingiu o limite de mensagens por hoje (30). Volte amanhã!")
+                    return jsonify({"status": "daily_limited"}), 200
+
+                # Trunca mensagens muito longas (máx 600 chars)
+                text, foi_truncado = truncar_mensagem(text)
+                if foi_truncado:
+                    send_whatsapp_message(remote_jid, "⚠️ Sua mensagem era muito longa e foi resumida. Tente ser mais breve (máximo ~10 linhas).")
+
                 feedbacks = get_feedbacks()
                 msg_hash = hashlib.md5(f"{text}{remote_jid}".encode()).hexdigest()
                 existing_hashes = {
