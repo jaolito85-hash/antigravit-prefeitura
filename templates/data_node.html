@@ -1574,6 +1574,10 @@
 
         <!-- Filters Bar -->
         <div class="filters-bar">
+            <div style="position:relative;display:flex;align-items:center;">
+                <i class="ri-search-line" style="position:absolute;left:10px;color:var(--text-muted);font-size:0.85rem;"></i>
+                <input type="text" id="busca-protocolo" placeholder="Buscar protocolo ou nome..." oninput="aplicarFiltros()" style="background:var(--bg-card);border:1px solid var(--border);color:var(--text-main);padding:8px 12px 8px 32px;border-radius:8px;font-size:0.85rem;font-family:'Inter',sans-serif;width:220px;">
+            </div>
             <select id="filtro-categoria" class="filter-select" onchange="aplicarFiltros()">
                 <option value="">Todas Categorias</option>
             </select>
@@ -2002,12 +2006,25 @@
                 events = events.filter(e => (e.status || 'aberto') !== 'resolvido');
             }
             _allEventsCache = events;
+
+            // Filtro de busca por protocolo, nome ou telefone
+            const buscaInput = document.getElementById('busca-protocolo');
+            const busca = buscaInput ? buscaInput.value.trim().toLowerCase() : '';
+            if (busca) {
+                events = events.filter(e => {
+                    const proto = (e.protocol || '').toLowerCase();
+                    const nome = (e.name || e.sender_name || '').toLowerCase();
+                    const sender = (e.sender || e.remoteJid || '').toLowerCase();
+                    return proto.includes(busca) || nome.includes(busca) || sender.includes(busca);
+                });
+            }
+
             const container = document.getElementById('feed-list-container');
             container.innerHTML = '';
 
             const countEl = document.getElementById('filter-count');
-            if (filterUrl === '/api/events') {
-                totalFeedbacks = events.length;
+            if (filterUrl === '/api/events' && !busca) {
+                totalFeedbacks = _allEventsCache.length;
                 countEl.innerText = `${events.length} feedbacks`;
             } else {
                 countEl.innerText = `Mostrando ${events.length} de ${totalFeedbacks} feedbacks`;
@@ -2241,7 +2258,7 @@
                 <div class="thread-header">
                     <div>
                         <div style="font-size:1.1rem; font-weight:700; display:flex; align-items:center; gap:8px;"><i class="ri-chat-3-fill" style="color:#059669;"></i> ${formatMessage(displayName)}</div>
-                        <div class="thread-sender">${displayPhone} ${whatsappLink} <span style="color:var(--border)">|</span> <span style="background:${urgencyColor}20;color:${urgencyColor};border:1px solid ${urgencyColor};font-size:0.7rem;font-weight:700;padding:2px 8px;border-radius:4px;">${e.category}</span></div>
+                        <div class="thread-sender">${displayPhone} ${whatsappLink} <span style="color:var(--border)">|</span> <span style="background:${urgencyColor}20;color:${urgencyColor};border:1px solid ${urgencyColor};font-size:0.7rem;font-weight:700;padding:2px 8px;border-radius:4px;">${e.category}</span>${e.protocol ? ` <span style="color:var(--border)">|</span> <span style="color:var(--text-muted);font-size:0.7rem;font-weight:600;">#${e.protocol}</span>` : ''}</div>
                         <div style="margin-top:4px;">${e.rua ? `<span style="color:#34d399;font-size:0.75rem;"><i class="ri-map-pin-line"></i> ${e.rua}${e.region && e.region !== 'N/A' ? ', ' + e.region : ''}</span>` : (e.region && e.region !== 'N/A' ? `<span style="color:#6ee7b7;font-size:0.75rem;"><i class="ri-map-pin-line"></i> ${e.region}</span>` : `<span style="color:#f59e0b;font-size:0.75rem;"><i class="ri-map-pin-2-line"></i> Endereço não informado</span>`)}</div>
                     </div>
                     <button onclick="closeThreadModal()" style="background:transparent;border:none;color:var(--text-muted);font-size:1.4rem;cursor:pointer;line-height:1;">×</button>
@@ -2507,7 +2524,7 @@
                 <div class="thread-header">
                     <div>
                         <div style="font-size:1.1rem; font-weight:700; display:flex; align-items:center; gap:8px;"><i class="ri-chat-3-fill" style="color:#059669;"></i> ${formatMessage(displayName)}</div>
-                        <div class="thread-sender">${displayPhone} ${whatsappLink} <span style="color:var(--border)">|</span> <span style="background:${urgencyColor}20;color:${urgencyColor};border:1px solid ${urgencyColor};font-size:0.7rem;font-weight:700;padding:2px 8px;border-radius:4px;">${e.category}</span></div>
+                        <div class="thread-sender">${displayPhone} ${whatsappLink} <span style="color:var(--border)">|</span> <span style="background:${urgencyColor}20;color:${urgencyColor};border:1px solid ${urgencyColor};font-size:0.7rem;font-weight:700;padding:2px 8px;border-radius:4px;">${e.category}</span>${e.protocol ? ` <span style="color:var(--border)">|</span> <span style="color:var(--text-muted);font-size:0.7rem;font-weight:600;">#${e.protocol}</span>` : ''}</div>
                         <div style="margin-top:4px;">${e.rua ? `<span style="color:#34d399;font-size:0.75rem;"><i class="ri-map-pin-line"></i> ${e.rua}${e.region && e.region !== 'N/A' ? ', ' + e.region : ''}</span>` : (e.region && e.region !== 'N/A' ? `<span style="color:#6ee7b7;font-size:0.75rem;"><i class="ri-map-pin-line"></i> ${e.region}</span>` : `<span style="color:#f59e0b;font-size:0.75rem;"><i class="ri-map-pin-2-line"></i> Endereço não informado</span>`)}</div>
                     </div>
                     <button onclick="closeThreadModal()" style="background:transparent;border:none;color:var(--text-muted);font-size:1.4rem;cursor:pointer;line-height:1;">×</button>
@@ -2547,6 +2564,7 @@
             document.getElementById('filtro-categoria').value = '';
             document.getElementById('filtro-prioridade').value = '';
             document.getElementById('filtro-status').value = 'ativos';
+            document.getElementById('busca-protocolo').value = '';
             aplicarFiltros();
         }
 

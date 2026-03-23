@@ -471,6 +471,103 @@ def verificar_consentimento_webhook(remote_jid: str, push_name: str, text: str) 
     return {"status": "consent_requested", "handled": True}
 
 
+## --- CONSULTA DE PROTOCOLO ---
+
+PROTOCOL_PATTERN = re.compile(r'(?:protocolo|#)\s*(\d{6,10})', re.IGNORECASE)
+PROTOCOL_ONLY_PATTERN = re.compile(r'^(\d{8,10})$')
+
+STATUS_LABELS = {
+    'aberto': 'Aberto - aguardando análise da equipe',
+    'em_andamento': 'Em andamento - a equipe já está cuidando',
+    'resolvido': 'Resolvido',
+}
+
+
+def extrair_protocolo(text: str) -> str | None:
+    """Detecta se o cidadão está consultando um protocolo."""
+    if not text:
+        return None
+    text_clean = text.strip()
+    # "protocolo 20260015" ou "#20260015"
+    match = PROTOCOL_PATTERN.search(text_clean)
+    if match:
+        return match.group(1)
+    # Apenas número solto com 8-10 dígitos (formato de protocolo)
+    match = PROTOCOL_ONLY_PATTERN.match(text_clean)
+    if match:
+        return match.group(1)
+    return None
+
+
+def buscar_feedback_por_protocolo(protocol_num: str) -> dict | None:
+    """Busca feedback pelo número de protocolo no Supabase."""
+    sb = get_supabase()
+    if not sb:
+        return None
+    try:
+        resp = sb.table('feedbacks').select('*').eq('protocol', protocol_num).limit(1).execute()
+        if resp.data:
+            return resp.data[0]
+    except Exception as e:
+        print(f"Erro ao buscar protocolo {protocol_num}: {e}")
+    return None
+
+
+def responder_consulta_protocolo(remote_jid: str, text: str) -> dict | None:
+    """Verifica se a mensagem é uma consulta de protocolo e responde.
+
+    Retorna None se não for consulta (fluxo normal continua).
+    Retorna dict com {'status': ..., 'handled': True} se tratou aqui.
+    """
+    protocol_num = extrair_protocolo(text)
+    if not protocol_num:
+        return None
+
+    feedback = buscar_feedback_por_protocolo(protocol_num)
+    if not feedback:
+        send_whatsapp_message(
+            remote_jid,
+            f"Não encontrei nenhum chamado com o protocolo #{protocol_num}. "
+            f"Verifique o número e tente novamente."
+        )
+        return {"status": "protocol_not_found", "handled": True}
+
+    status = feedback.get('status', 'aberto')
+    status_label = STATUS_LABELS.get(status, status)
+    categoria = feedback.get('category', 'Geral')
+    regiao = feedback.get('region', '')
+    rua = feedback.get('rua', '')
+
+    local = ''
+    if rua:
+        local = f"\n📍 Local: {rua}"
+        if regiao and regiao != 'N/A':
+            local += f", {regiao}"
+    elif regiao and regiao != 'N/A':
+        local = f"\n📍 Bairro: {regiao}"
+
+    if status == 'resolvido':
+        emoji = '✅'
+        complemento = '\n\nSe precisar de mais alguma coisa, é só mandar uma nova mensagem!'
+    elif status == 'em_andamento':
+        emoji = '🔄'
+        complemento = '\n\nAssim que tivermos novidades, você será informado.'
+    else:
+        emoji = '📋'
+        complemento = '\n\nSua solicitação está na fila e será analisada em breve.'
+
+    reply = (
+        f"{emoji} *Protocolo #{protocol_num}*\n\n"
+        f"📌 Categoria: {categoria}\n"
+        f"📊 Status: *{status_label}*"
+        f"{local}"
+        f"{complemento}"
+    )
+
+    send_whatsapp_message(remote_jid, reply)
+    return {"status": "protocol_consulted", "handled": True}
+
+
 def save_json(filepath, data):
     """Fallback for local JSON files"""
     with open(filepath, 'w', encoding='utf-8') as f:
@@ -1468,6 +1565,409 @@ Regras:
         print(f"Erro painel inteligencia: {e}")
         return fallback
 
+
+# --- RELATÓRIO MUNICIPAL ---
+
+# Cache para relatório (evita chamadas repetidas ao GPT)
+relatorio_cache = {}  # {cache_key: {"data": ..., "timestamp": datetime}}
+RELATORIO_CACHE_TTL = 300  # 5 minutos
+
+MESES_PT = {
+    1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril',
+    5: 'Maio', 6: 'Junho', 7: 'Julho', 8: 'Agosto',
+    9: 'Setembro', 10: 'Outubro', 11: 'Novembro', 12: 'Dezembro'
+}
+
+DIAS_SEMANA_PT = {
+    0: 'Segunda', 1: 'Terça', 2: 'Quarta', 3: 'Quinta',
+    4: 'Sexta', 5: 'Sábado', 6: 'Domingo'
+}
+
+
+def get_feedbacks_by_period(periodo='mes', data_ref=None):
+    """Filtra feedbacks por período temporal com comparativo anterior.
+
+    Args:
+        periodo: 'dia', 'semana', 'mes', 'ano'
+        data_ref: data de referência (date object), default hoje
+
+    Returns:
+        tuple: (feedbacks_atual, feedbacks_anterior, periodo_info)
+    """
+    from calendar import monthrange
+
+    if data_ref is None:
+        data_ref = datetime.utcnow().date()
+
+    # Calcular ranges de datas
+    if periodo == 'dia':
+        inicio = datetime(data_ref.year, data_ref.month, data_ref.day, 0, 0, 0)
+        fim = datetime(data_ref.year, data_ref.month, data_ref.day, 23, 59, 59)
+        ant_date = data_ref - timedelta(days=1)
+        anterior_inicio = datetime(ant_date.year, ant_date.month, ant_date.day, 0, 0, 0)
+        anterior_fim = datetime(ant_date.year, ant_date.month, ant_date.day, 23, 59, 59)
+        label = f"{data_ref.strftime('%d')} de {MESES_PT[data_ref.month]} {data_ref.year}"
+        anterior_label = f"{ant_date.strftime('%d')} de {MESES_PT[ant_date.month]} {ant_date.year}"
+
+    elif periodo == 'semana':
+        # Segunda a domingo da semana
+        weekday = data_ref.weekday()
+        monday = data_ref - timedelta(days=weekday)
+        sunday = monday + timedelta(days=6)
+        inicio = datetime(monday.year, monday.month, monday.day, 0, 0, 0)
+        fim = datetime(sunday.year, sunday.month, sunday.day, 23, 59, 59)
+        ant_monday = monday - timedelta(days=7)
+        ant_sunday = ant_monday + timedelta(days=6)
+        anterior_inicio = datetime(ant_monday.year, ant_monday.month, ant_monday.day, 0, 0, 0)
+        anterior_fim = datetime(ant_sunday.year, ant_sunday.month, ant_sunday.day, 23, 59, 59)
+        label = f"{monday.strftime('%d/%m')} a {sunday.strftime('%d/%m/%Y')}"
+        anterior_label = f"{ant_monday.strftime('%d/%m')} a {ant_sunday.strftime('%d/%m/%Y')}"
+
+    elif periodo == 'mes':
+        _, last_day = monthrange(data_ref.year, data_ref.month)
+        inicio = datetime(data_ref.year, data_ref.month, 1, 0, 0, 0)
+        fim = datetime(data_ref.year, data_ref.month, last_day, 23, 59, 59)
+        # Mês anterior
+        if data_ref.month == 1:
+            ant_year, ant_month = data_ref.year - 1, 12
+        else:
+            ant_year, ant_month = data_ref.year, data_ref.month - 1
+        _, ant_last_day = monthrange(ant_year, ant_month)
+        anterior_inicio = datetime(ant_year, ant_month, 1, 0, 0, 0)
+        anterior_fim = datetime(ant_year, ant_month, ant_last_day, 23, 59, 59)
+        label = f"{MESES_PT[data_ref.month]} {data_ref.year}"
+        anterior_label = f"{MESES_PT[ant_month]} {ant_year}"
+
+    else:  # ano
+        inicio = datetime(data_ref.year, 1, 1, 0, 0, 0)
+        fim = datetime(data_ref.year, 12, 31, 23, 59, 59)
+        anterior_inicio = datetime(data_ref.year - 1, 1, 1, 0, 0, 0)
+        anterior_fim = datetime(data_ref.year - 1, 12, 31, 23, 59, 59)
+        label = str(data_ref.year)
+        anterior_label = str(data_ref.year - 1)
+
+    # Buscar todos os feedbacks e filtrar por data
+    all_feedbacks = get_feedbacks()
+
+    fb_atual = []
+    fb_anterior = []
+
+    for fb in all_feedbacks:
+        ts = parse_iso_datetime(fb.get('timestamp') or fb.get('created_at'))
+        if not ts:
+            continue
+        if inicio <= ts <= fim:
+            fb_atual.append(fb)
+        elif anterior_inicio <= ts <= anterior_fim:
+            fb_anterior.append(fb)
+
+    periodo_info = {
+        "tipo": periodo,
+        "inicio": inicio.isoformat(),
+        "fim": fim.isoformat(),
+        "label": label,
+        "anterior_inicio": anterior_inicio.isoformat(),
+        "anterior_fim": anterior_fim.isoformat(),
+        "anterior_label": anterior_label
+    }
+
+    return fb_atual, fb_anterior, periodo_info
+
+
+def aggregate_relatorio_data(fb_atual, fb_anterior, periodo_info):
+    """Agrega dados do relatório a partir de feedbacks filtrados."""
+    config = get_config()
+    cat_colors = {c['name']: c.get('color', '#8b5cf6') for c in config.get('categories', [])}
+
+    total = len(fb_atual)
+    total_ant = len(fb_anterior)
+
+    # Sentimentos (usa campo urgency que tem Positivo/Neutro/Urgente/Critico)
+    sent_atual = Counter(fb.get('urgency', 'Neutro') for fb in fb_atual)
+    sent_anterior = Counter(fb.get('urgency', 'Neutro') for fb in fb_anterior)
+
+    # Satisfação = feedbacks Positivos / total
+    positivos = sent_atual.get('Positivo', 0)
+    positivos_ant = sent_anterior.get('Positivo', 0)
+    satisfacao = round((positivos / total) * 100, 1) if total > 0 else 0
+    satisfacao_ant = round((positivos_ant / total_ant) * 100, 1) if total_ant > 0 else 0
+
+    # Resolvidos
+    resolvidos = sum(1 for fb in fb_atual if fb.get('status') == 'resolvido')
+    resolvidos_ant = sum(1 for fb in fb_anterior if fb.get('status') == 'resolvido')
+    taxa_resolucao = round((resolvidos / total) * 100, 1) if total > 0 else 0
+    taxa_resolucao_ant = round((resolvidos_ant / total_ant) * 100, 1) if total_ant > 0 else 0
+
+    # Tempo médio de resolução (horas)
+    tempos = []
+    for fb in fb_atual:
+        if fb.get('status') == 'resolvido' and fb.get('resolved_at') and fb.get('created_at'):
+            criado = parse_iso_datetime(fb['created_at'])
+            resolvido = parse_iso_datetime(fb['resolved_at'])
+            if criado and resolvido and resolvido > criado:
+                tempos.append((resolvido - criado).total_seconds() / 3600)
+    tempo_medio = round(sum(tempos) / len(tempos), 1) if tempos else 0
+
+    tempos_ant = []
+    for fb in fb_anterior:
+        if fb.get('status') == 'resolvido' and fb.get('resolved_at') and fb.get('created_at'):
+            criado = parse_iso_datetime(fb['created_at'])
+            resolvido = parse_iso_datetime(fb['resolved_at'])
+            if criado and resolvido and resolvido > criado:
+                tempos_ant.append((resolvido - criado).total_seconds() / 3600)
+    tempo_medio_ant = round(sum(tempos_ant) / len(tempos_ant), 1) if tempos_ant else 0
+
+    criticos = sum(1 for fb in fb_atual if fb.get('urgency') in ['Critico', 'Crítico'])
+    urgentes = sum(1 for fb in fb_atual if fb.get('urgency') == 'Urgente')
+
+    def variacao(atual_val, anterior_val):
+        if anterior_val == 0:
+            return 100.0 if atual_val > 0 else 0
+        return round(((atual_val - anterior_val) / anterior_val) * 100, 1)
+
+    # Categorias
+    cat_atual = Counter(fb.get('category', 'Outros') for fb in fb_atual)
+    cat_anterior = Counter(fb.get('category', 'Outros') for fb in fb_anterior)
+    todas_categorias = sorted(set(list(cat_atual.keys()) + list(cat_anterior.keys())))
+    categorias = []
+    for cat in todas_categorias:
+        if cat and cat != 'N/A':
+            categorias.append({
+                "nome": cat,
+                "count": cat_atual.get(cat, 0),
+                "count_anterior": cat_anterior.get(cat, 0),
+                "cor": cat_colors.get(cat, '#8b5cf6')
+            })
+    categorias.sort(key=lambda x: x['count'], reverse=True)
+
+    # Regiões
+    reg_atual = Counter(fb.get('region', 'N/A') for fb in fb_atual)
+    reg_anterior = Counter(fb.get('region', 'N/A') for fb in fb_anterior)
+    todas_regioes = sorted(set(list(reg_atual.keys()) + list(reg_anterior.keys())))
+    regioes = []
+    for reg in todas_regioes:
+        if reg and reg != 'N/A':
+            regioes.append({
+                "nome": reg,
+                "count": reg_atual.get(reg, 0),
+                "count_anterior": reg_anterior.get(reg, 0)
+            })
+    regioes.sort(key=lambda x: x['count'], reverse=True)
+
+    # Timeline
+    tipo = periodo_info['tipo']
+    inicio_dt = parse_iso_datetime(periodo_info['inicio'])
+    fim_dt = parse_iso_datetime(periodo_info['fim'])
+    ant_inicio_dt = parse_iso_datetime(periodo_info['anterior_inicio'])
+
+    labels = []
+    valores = []
+    valores_ant = []
+
+    if tipo == 'dia':
+        for h in range(24):
+            labels.append(f"{h:02d}:00")
+            valores.append(0)
+            valores_ant.append(0)
+        for fb in fb_atual:
+            ts = parse_iso_datetime(fb.get('timestamp') or fb.get('created_at'))
+            if ts:
+                valores[ts.hour] += 1
+        for fb in fb_anterior:
+            ts = parse_iso_datetime(fb.get('timestamp') or fb.get('created_at'))
+            if ts:
+                valores_ant[ts.hour] += 1
+
+    elif tipo == 'semana':
+        for d in range(7):
+            dt = inicio_dt + timedelta(days=d)
+            labels.append(f"{DIAS_SEMANA_PT[d][:3]}")
+            valores.append(0)
+            valores_ant.append(0)
+        for fb in fb_atual:
+            ts = parse_iso_datetime(fb.get('timestamp') or fb.get('created_at'))
+            if ts and inicio_dt <= ts <= fim_dt:
+                idx = (ts.date() - inicio_dt.date()).days
+                if 0 <= idx < 7:
+                    valores[idx] += 1
+        for fb in fb_anterior:
+            ts = parse_iso_datetime(fb.get('timestamp') or fb.get('created_at'))
+            if ts:
+                idx = (ts.date() - ant_inicio_dt.date()).days
+                if 0 <= idx < 7:
+                    valores_ant[idx] += 1
+
+    elif tipo == 'mes':
+        from calendar import monthrange
+        _, days_in_month = monthrange(inicio_dt.year, inicio_dt.month)
+        for d in range(1, days_in_month + 1):
+            labels.append(f"{d:02d}")
+            valores.append(0)
+            valores_ant.append(0)
+        _, ant_days = monthrange(ant_inicio_dt.year, ant_inicio_dt.month)
+        # Pad anterior se meses diferentes
+        while len(valores_ant) < days_in_month:
+            valores_ant.append(0)
+        for fb in fb_atual:
+            ts = parse_iso_datetime(fb.get('timestamp') or fb.get('created_at'))
+            if ts:
+                idx = ts.day - 1
+                if 0 <= idx < days_in_month:
+                    valores[idx] += 1
+        for fb in fb_anterior:
+            ts = parse_iso_datetime(fb.get('timestamp') or fb.get('created_at'))
+            if ts:
+                idx = ts.day - 1
+                if 0 <= idx < len(valores_ant):
+                    valores_ant[idx] += 1
+
+    else:  # ano
+        meses_short = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
+        for m in range(12):
+            labels.append(meses_short[m])
+            valores.append(0)
+            valores_ant.append(0)
+        for fb in fb_atual:
+            ts = parse_iso_datetime(fb.get('timestamp') or fb.get('created_at'))
+            if ts:
+                valores[ts.month - 1] += 1
+        for fb in fb_anterior:
+            ts = parse_iso_datetime(fb.get('timestamp') or fb.get('created_at'))
+            if ts:
+                valores_ant[ts.month - 1] += 1
+
+    # Top problemas
+    topic_counter = Counter()
+    topic_cat = {}
+    for fb in fb_atual:
+        topic = fb.get('topic')
+        if topic and topic != 'N/A':
+            topic_counter[topic] += 1
+            topic_cat[topic] = fb.get('category', 'Outros')
+    top_problemas = [
+        {"topic": t, "count": c, "categoria": topic_cat.get(t, 'Outros')}
+        for t, c in topic_counter.most_common(10)
+    ]
+
+    return {
+        "periodo": periodo_info,
+        "kpis": {
+            "total": total,
+            "total_anterior": total_ant,
+            "variacao_total": variacao(total, total_ant),
+            "satisfacao": satisfacao,
+            "satisfacao_anterior": satisfacao_ant,
+            "variacao_satisfacao": round(satisfacao - satisfacao_ant, 1),
+            "resolvidos": resolvidos,
+            "resolvidos_anterior": resolvidos_ant,
+            "variacao_resolvidos": variacao(resolvidos, resolvidos_ant),
+            "taxa_resolucao": taxa_resolucao,
+            "taxa_resolucao_anterior": taxa_resolucao_ant,
+            "tempo_medio_resolucao_horas": tempo_medio,
+            "tempo_medio_resolucao_anterior": tempo_medio_ant,
+            "criticos": criticos,
+            "urgentes": urgentes
+        },
+        "sentimentos": dict(sent_atual),
+        "sentimentos_anterior": dict(sent_anterior),
+        "categorias": categorias,
+        "regioes": regioes,
+        "timeline": {
+            "labels": labels,
+            "valores": valores,
+            "valores_anterior": valores_ant
+        },
+        "top_problemas": top_problemas
+    }
+
+
+def generate_relatorio_analysis(dados, fb_atual):
+    """Gera análise executiva por IA para o relatório do prefeito."""
+    kpis = dados['kpis']
+    periodo = dados['periodo']
+    categorias = dados.get('categorias', [])
+    regioes = dados.get('regioes', [])
+
+    fallback = {
+        "resumo_executivo": f"No período {periodo['label']}, foram registrados {kpis['total']} feedbacks com índice de satisfação de {kpis['satisfacao']}%. "
+                           f"Em comparação com {periodo['anterior_label']}, houve variação de {kpis['variacao_total']}% no volume total.",
+        "pontos_positivos": [],
+        "pontos_atencao": [],
+        "recomendacoes": [],
+        "tendencia": "estavel",
+        "destaque_regional": "",
+        "destaque_categoria": ""
+    }
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key or not fb_atual:
+        return fallback
+
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key)
+
+        # Preparar amostra de feedbacks (máximo 30, sem dados pessoais)
+        feedback_lines = []
+        for fb in fb_atual[:30]:
+            preview = get_feedback_preview(fb.get('message', '')) or fb.get('message', '')
+            feedback_lines.append(
+                f"- [{fb.get('urgency', 'Neutro')}] {fb.get('category', 'Geral')} | {fb.get('region', 'N/A')} | {preview[:120]}"
+            )
+
+        top_cats = ', '.join([f"{c['nome']}({c['count']})" for c in categorias[:5]])
+        top_regs = ', '.join([f"{r['nome']}({r['count']})" for r in regioes[:5]])
+
+        prompt = f'''Você é um analista sênior de gestão pública municipal.
+Analise os dados do período {periodo['label']} da Prefeitura de Ivaté-PR comparando com o período anterior ({periodo['anterior_label']}).
+
+DADOS DO PERÍODO ATUAL ({periodo['label']}):
+- Total de feedbacks: {kpis['total']} (anterior: {kpis['total_anterior']}, variação: {kpis['variacao_total']}%)
+- Satisfação: {kpis['satisfacao']}% (anterior: {kpis['satisfacao_anterior']}%)
+- Resolvidos: {kpis['resolvidos']} de {kpis['total']} ({kpis['taxa_resolucao']}%)
+- Críticos: {kpis['criticos']}, Urgentes: {kpis['urgentes']}
+- Tempo médio resolução: {kpis['tempo_medio_resolucao_horas']}h
+- Categorias mais citadas: {top_cats}
+- Regiões mais citadas: {top_regs}
+
+FEEDBACKS REPRESENTATIVOS:
+{chr(10).join(feedback_lines)}
+
+Responda APENAS em JSON válido:
+{{
+  "resumo_executivo": "Parágrafo de 3-4 frases para o prefeito comparando os dois períodos, com dados concretos",
+  "pontos_positivos": ["até 3 destaques positivos"],
+  "pontos_atencao": ["até 3 pontos que precisam atenção"],
+  "recomendacoes": ["até 3 ações recomendadas para o próximo período"],
+  "tendencia": "melhora | estavel | piora",
+  "destaque_regional": "Frase curta sobre a região que mais precisa atenção",
+  "destaque_categoria": "Frase curta sobre a categoria mais relevante"
+}}
+
+Regras:
+- Seja concreto e acionável, baseado exclusivamente nos dados.
+- Compare sempre com o período anterior usando números.
+- Foque em insights que ajudem na tomada de decisão do prefeito.
+- Máximo 800 tokens de resposta.'''
+
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=800,
+            temperature=0.3
+        )
+        result_text = response.choices[0].message.content.strip()
+        if result_text.startswith('```'):
+            result_text = result_text.split('```')[1]
+            if result_text.startswith('json'):
+                result_text = result_text[4:]
+        return json.loads(result_text)
+
+    except Exception as e:
+        print(f"Erro análise relatório IA: {e}")
+        return fallback
+
+
 # --- SPAM PROTECTION ---
 
 # Rate Limiter: max messages per sender in a time window
@@ -1671,6 +2171,73 @@ def export_json():
     return jsonify(feedbacks), 200, {
         'Content-Disposition': 'attachment; filename=feedbacks_prefeitura.json'
     }
+
+
+# --- RELATÓRIO MUNICIPAL (ROTAS) ---
+
+@app.route("/relatorio")
+@login_obrigatorio
+def relatorio_page():
+    """Página do Relatório Municipal para o prefeito."""
+    return render_template("relatorio.html")
+
+
+@app.route("/api/relatorio")
+@login_obrigatorio
+def get_relatorio():
+    """API que retorna dados agregados do relatório por período."""
+    global relatorio_cache
+
+    periodo = request.args.get('periodo', 'mes')
+    data_str = request.args.get('data', None)
+
+    # Validar período
+    if periodo not in ('dia', 'semana', 'mes', 'ano'):
+        return jsonify({"error": "Período inválido. Use: dia, semana, mes, ano"}), 400
+
+    # Parsear data de referência
+    data_ref = None
+    if data_str:
+        try:
+            data_ref = datetime.strptime(data_str, '%Y-%m-%d').date()
+        except ValueError:
+            return jsonify({"error": "Formato de data inválido. Use YYYY-MM-DD"}), 400
+
+    # Verificar cache (5 minutos)
+    cache_key = f"{periodo}_{data_str or 'hoje'}"
+    now = datetime.utcnow()
+    if cache_key in relatorio_cache:
+        cached = relatorio_cache[cache_key]
+        if cached.get("timestamp") and (now - cached["timestamp"]).total_seconds() < RELATORIO_CACHE_TTL:
+            return jsonify(cached["data"])
+
+    try:
+        # Buscar e filtrar feedbacks
+        fb_atual, fb_anterior, periodo_info = get_feedbacks_by_period(periodo, data_ref)
+
+        # Agregar dados
+        dados = aggregate_relatorio_data(fb_atual, fb_anterior, periodo_info)
+
+        # Gerar análise por IA
+        ai_analise = generate_relatorio_analysis(dados, fb_atual)
+
+        # Montar resposta final
+        result = {
+            **dados,
+            "ai_analise": ai_analise,
+            "gerado_em": now.isoformat(),
+            "cidade": "Ivaté-PR"
+        }
+
+        # Salvar em cache
+        relatorio_cache[cache_key] = {"data": result, "timestamp": now}
+
+        return jsonify(result)
+
+    except Exception as e:
+        print(f"Erro ao gerar relatório: {e}")
+        return jsonify({"error": "Erro ao gerar relatório. Tente novamente."}), 500
+
 
 @app.route("/api/config", methods=["GET"])
 @login_obrigatorio
@@ -1897,6 +2464,13 @@ def webhook():
                 consent_result = verificar_consentimento_webhook(remote_jid, push_name, text)
                 if consent_result and consent_result.get("handled"):
                     return jsonify({"status": consent_result["status"]}), 200
+
+            # --- CONSULTA DE PROTOCOLO ---
+            # Cidadão pode consultar status enviando "protocolo 20260015" ou "#20260015"
+            if text and remote_jid:
+                protocol_result = responder_consulta_protocolo(remote_jid, text)
+                if protocol_result and protocol_result.get("handled"):
+                    return jsonify({"status": protocol_result["status"]}), 200
 
             # Audio Processing
             if not text and audio_msg and remote_jid:
@@ -2200,6 +2774,7 @@ REGRAS ABSOLUTAS:
                     "sentiment": "Positivo" if sentimento == "Positivo" else ("Negativo" if sentimento in ["Critico", "Urgente"] else "Neutro"),
                     "topic": topic,
                     "status": "aberto",
+                    "protocol": protocol_num,
                     "rua": extracted_rua,
                     "location_status": initial_loc_status,
                 }
