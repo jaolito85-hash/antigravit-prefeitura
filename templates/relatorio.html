@@ -1,0 +1,1322 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Relatório Municipal | Node Data</title>
+    <link rel="icon" type="image/png" sizes="512x512" href="/static/icons/icon-512.png">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/remixicon@3.5.0/fonts/remixicon.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --bg-body: #050507;
+            --bg-card: #111217;
+            --bg-hover: #1c1e26;
+            --accent-primary: #059669;
+            --accent-green: #22c55e;
+            --accent-red: #ef4444;
+            --accent-yellow: #f59e0b;
+            --accent-blue: #3b82f6;
+            --accent-purple: #8b5cf6;
+            --text-main: #ffffff;
+            --text-muted: #8b949e;
+            --border: #23252e;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Inter', -apple-system, sans-serif;
+            background: var(--bg-body);
+            color: var(--text-main);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 24px;
+        }
+
+        /* === HEADER === */
+        .report-header {
+            background: linear-gradient(135deg, #0b0c10 0%, #111217 100%);
+            border-bottom: 1px solid var(--border);
+            padding: 20px 0;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            backdrop-filter: blur(12px);
+        }
+
+        .header-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
+        .header-brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .header-brand img {
+            height: 32px;
+        }
+
+        .header-title {
+            font-size: 20px;
+            font-weight: 700;
+        }
+
+        .header-title span {
+            background: linear-gradient(135deg, var(--accent-primary), var(--accent-blue));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .btn-back {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 16px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 13px;
+            transition: all 0.2s;
+        }
+
+        .btn-back:hover {
+            background: var(--bg-hover);
+            color: var(--text-main);
+        }
+
+        .header-controls {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        .period-tabs {
+            display: flex;
+            background: var(--bg-card);
+            border-radius: 10px;
+            padding: 3px;
+            border: 1px solid var(--border);
+        }
+
+        .period-tab {
+            padding: 8px 20px;
+            border-radius: 8px;
+            border: none;
+            background: transparent;
+            color: var(--text-muted);
+            font-family: inherit;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .period-tab.active {
+            background: var(--accent-primary);
+            color: white;
+        }
+
+        .period-tab:hover:not(.active) {
+            color: var(--text-main);
+            background: var(--bg-hover);
+        }
+
+        .period-nav {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .nav-btn {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--bg-card);
+            color: var(--text-muted);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            font-size: 16px;
+            transition: all 0.2s;
+        }
+
+        .nav-btn:hover {
+            background: var(--bg-hover);
+            color: var(--text-main);
+        }
+
+        .period-label {
+            font-size: 15px;
+            font-weight: 600;
+            min-width: 180px;
+            text-align: center;
+        }
+
+        /* === LOADING === */
+        .loading-screen {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 60vh;
+            gap: 16px;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid var(--border);
+            border-top-color: var(--accent-primary);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .loading-text {
+            color: var(--text-muted);
+            font-size: 14px;
+        }
+
+        /* === CONTENT === */
+        .report-content {
+            padding: 32px 0 100px;
+        }
+
+        .hidden { display: none !important; }
+
+        .section-title {
+            font-size: 18px;
+            font-weight: 700;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .section-title i {
+            font-size: 20px;
+            color: var(--accent-primary);
+        }
+
+        /* === KPI CARDS === */
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            margin-bottom: 32px;
+        }
+
+        .kpi-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 24px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .kpi-card::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            border-radius: 14px 14px 0 0;
+        }
+
+        .kpi-card:nth-child(1)::after { background: var(--accent-primary); }
+        .kpi-card:nth-child(2)::after { background: var(--accent-green); }
+        .kpi-card:nth-child(3)::after { background: var(--accent-blue); }
+        .kpi-card:nth-child(4)::after { background: var(--accent-purple); }
+
+        .kpi-label {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+        }
+
+        .kpi-value {
+            font-size: 36px;
+            font-weight: 800;
+            line-height: 1;
+            margin-bottom: 8px;
+        }
+
+        .kpi-card:nth-child(1) .kpi-value { color: var(--accent-primary); }
+        .kpi-card:nth-child(2) .kpi-value { color: var(--accent-green); }
+        .kpi-card:nth-child(3) .kpi-value { color: var(--accent-blue); }
+        .kpi-card:nth-child(4) .kpi-value { color: var(--accent-purple); }
+
+        .kpi-detail {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .variation {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+            font-size: 12px;
+            font-weight: 600;
+            padding: 2px 8px;
+            border-radius: 20px;
+        }
+
+        .variation.up {
+            color: var(--accent-green);
+            background: rgba(34, 197, 94, 0.1);
+        }
+
+        .variation.down {
+            color: var(--accent-red);
+            background: rgba(239, 68, 68, 0.1);
+        }
+
+        .variation.neutral {
+            color: var(--text-muted);
+            background: rgba(139, 148, 158, 0.1);
+        }
+
+        /* === AI SECTION === */
+        .ai-section {
+            background: var(--bg-card);
+            border: 1px solid var(--accent-yellow);
+            border-left: 4px solid var(--accent-yellow);
+            border-radius: 14px;
+            padding: 28px;
+            margin-bottom: 32px;
+        }
+
+        .ai-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+
+        .ai-badge {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--accent-yellow);
+        }
+
+        .ai-badge i { font-size: 14px; }
+
+        .trend-badge {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .trend-melhora {
+            background: rgba(34, 197, 94, 0.12);
+            color: var(--accent-green);
+            border: 1px solid rgba(34, 197, 94, 0.3);
+        }
+
+        .trend-estavel {
+            background: rgba(59, 130, 246, 0.12);
+            color: var(--accent-blue);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+        }
+
+        .trend-piora {
+            background: rgba(239, 68, 68, 0.12);
+            color: var(--accent-red);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+
+        .ai-text {
+            font-size: 15px;
+            line-height: 1.7;
+            color: var(--text-main);
+        }
+
+        /* === CHARTS ROW === */
+        .charts-row {
+            display: grid;
+            grid-template-columns: 1fr 1.5fr;
+            gap: 16px;
+            margin-bottom: 32px;
+        }
+
+        .chart-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 24px;
+        }
+
+        .chart-card-title {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-muted);
+            margin-bottom: 20px;
+        }
+
+        .chart-container {
+            position: relative;
+            width: 100%;
+        }
+
+        .donut-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 24px;
+        }
+
+        .donut-canvas-wrapper {
+            width: 200px;
+            height: 200px;
+            position: relative;
+        }
+
+        .donut-center-label {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+        }
+
+        .donut-center-value {
+            font-size: 28px;
+            font-weight: 800;
+        }
+
+        .donut-center-text {
+            font-size: 10px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .donut-legend {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+        }
+
+        .legend-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .legend-count {
+            color: var(--text-muted);
+            margin-left: auto;
+            font-weight: 600;
+        }
+
+        /* === BARS === */
+        .bars-section {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 24px;
+            margin-bottom: 32px;
+        }
+
+        .bar-row {
+            display: flex;
+            align-items: center;
+            padding: 10px 0;
+            border-bottom: 1px solid rgba(35, 37, 46, 0.5);
+        }
+
+        .bar-row:last-child { border-bottom: none; }
+
+        .bar-label {
+            width: 200px;
+            font-size: 13px;
+            font-weight: 500;
+            flex-shrink: 0;
+        }
+
+        .bar-track {
+            flex: 1;
+            height: 24px;
+            background: rgba(35, 37, 46, 0.5);
+            border-radius: 6px;
+            position: relative;
+            overflow: hidden;
+            margin: 0 16px;
+        }
+
+        .bar-fill {
+            height: 100%;
+            border-radius: 6px;
+            transition: width 0.8s cubic-bezier(0.25, 0.8, 0.25, 1);
+            min-width: 4px;
+        }
+
+        .bar-fill-anterior {
+            position: absolute;
+            top: 0;
+            left: 0;
+            height: 100%;
+            border-radius: 6px;
+            opacity: 0.25;
+            border-right: 2px dashed rgba(255,255,255,0.4);
+        }
+
+        .bar-count {
+            width: 60px;
+            text-align: right;
+            font-size: 14px;
+            font-weight: 700;
+            flex-shrink: 0;
+        }
+
+        .bar-variation {
+            width: 70px;
+            text-align: right;
+            flex-shrink: 0;
+        }
+
+        /* === INSIGHTS GRID === */
+        .insights-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+            margin-bottom: 32px;
+        }
+
+        .insight-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 24px;
+            border-top: 3px solid;
+        }
+
+        .insight-card.positivo { border-top-color: var(--accent-green); }
+        .insight-card.atencao { border-top-color: var(--accent-yellow); }
+        .insight-card.recomendacao { border-top-color: var(--accent-blue); }
+
+        .insight-title {
+            font-size: 14px;
+            font-weight: 700;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .insight-card.positivo .insight-title { color: var(--accent-green); }
+        .insight-card.atencao .insight-title { color: var(--accent-yellow); }
+        .insight-card.recomendacao .insight-title { color: var(--accent-blue); }
+
+        .insight-list {
+            list-style: none;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .insight-list li {
+            font-size: 13px;
+            line-height: 1.5;
+            color: var(--text-muted);
+            padding-left: 16px;
+            position: relative;
+        }
+
+        .insight-list li::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 7px;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+        }
+
+        .insight-card.positivo .insight-list li::before { background: var(--accent-green); }
+        .insight-card.atencao .insight-list li::before { background: var(--accent-yellow); }
+        .insight-card.recomendacao .insight-list li::before { background: var(--accent-blue); }
+
+        /* === TOP PROBLEMS === */
+        .problems-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .problem-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+        }
+
+        .problem-rank {
+            width: 28px;
+            height: 28px;
+            border-radius: 8px;
+            background: var(--bg-hover);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--text-muted);
+            flex-shrink: 0;
+        }
+
+        .problem-topic {
+            flex: 1;
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        .problem-cat {
+            font-size: 11px;
+            padding: 3px 10px;
+            border-radius: 20px;
+            background: var(--bg-hover);
+            color: var(--text-muted);
+        }
+
+        .problem-count {
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--accent-primary);
+        }
+
+        /* === COMPARISON TABLE === */
+        .comparison-table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+        }
+
+        .comparison-table th {
+            text-align: left;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-muted);
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .comparison-table td {
+            padding: 14px 16px;
+            font-size: 14px;
+            border-bottom: 1px solid rgba(35, 37, 46, 0.5);
+        }
+
+        .comparison-table tr:last-child td { border-bottom: none; }
+
+        .comparison-table .metric-name {
+            font-weight: 500;
+        }
+
+        .comparison-table .metric-value {
+            font-weight: 700;
+            text-align: center;
+        }
+
+        /* === EMPTY STATE === */
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-muted);
+        }
+
+        .empty-state i {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.4;
+        }
+
+        .empty-state p {
+            font-size: 15px;
+        }
+
+        /* === FOOTER === */
+        .report-footer {
+            text-align: center;
+            padding: 40px 0;
+            border-top: 1px solid var(--border);
+            margin-top: 40px;
+        }
+
+        .report-footer .generated {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+        }
+
+        .report-footer .brand {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .report-footer .brand a {
+            color: var(--accent-primary);
+            text-decoration: none;
+        }
+
+        /* === FAB === */
+        .fab-print {
+            position: fixed;
+            bottom: 32px;
+            right: 32px;
+            padding: 14px 24px;
+            background: var(--accent-blue);
+            color: white;
+            border: none;
+            border-radius: 14px;
+            font-family: inherit;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 8px 32px rgba(59, 130, 246, 0.3);
+            transition: all 0.2s;
+            z-index: 90;
+        }
+
+        .fab-print:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 40px rgba(59, 130, 246, 0.4);
+        }
+
+        /* === RESPONSIVE === */
+        @media (max-width: 900px) {
+            .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+            .charts-row { grid-template-columns: 1fr; }
+            .insights-grid { grid-template-columns: 1fr; }
+            .bar-label { width: 140px; font-size: 12px; }
+            .bar-variation { display: none; }
+        }
+
+        @media (max-width: 600px) {
+            .kpi-grid { grid-template-columns: 1fr; }
+            .header-controls { flex-direction: column; align-items: stretch; }
+            .period-nav { justify-content: center; }
+            .header-top { flex-direction: column; gap: 12px; }
+            .donut-wrapper { flex-direction: column; align-items: center; }
+        }
+
+        /* === PRINT === */
+        @media print {
+            body { background: white !important; color: #1a1a1a !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            .report-header { position: static; background: white !important; border-bottom: 2px solid #ddd; }
+            .period-tabs, .nav-btn, .btn-back, .fab-print { display: none !important; }
+            .kpi-card { background: #f9f9f9 !important; border: 1px solid #ddd !important; }
+            .kpi-card::after { display: none; }
+            .kpi-value { color: #1a1a1a !important; }
+            .kpi-label, .kpi-detail, .chart-card-title { color: #666 !important; }
+            .ai-section { background: #fffdf5 !important; border-color: #e6a800 !important; }
+            .ai-text { color: #333 !important; }
+            .chart-card, .bars-section, .insight-card, .problem-item { background: #fafafa !important; border-color: #ddd !important; }
+            .bar-track { background: #eee !important; }
+            .report-content { padding: 16px 0 !important; }
+            .container { max-width: 100%; padding: 0 16px; }
+            .section-title i { color: #333 !important; }
+            .bars-section, .insights-grid { page-break-inside: avoid; }
+            canvas { max-height: 250px !important; }
+            .report-footer .brand a { color: #059669 !important; }
+            .text-main-print { color: #1a1a1a !important; }
+            .text-muted-print { color: #666 !important; }
+            .comparison-table th, .comparison-table td { color: #333 !important; }
+            .variation.up { color: #16a34a !important; background: #f0fdf4 !important; }
+            .variation.down { color: #dc2626 !important; background: #fef2f2 !important; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- HEADER -->
+    <header class="report-header">
+        <div class="container">
+            <div class="header-top">
+                <div class="header-brand">
+                    <img src="/static/logo.png" alt="Node Data" onerror="this.style.display='none'">
+                    <div class="header-title">Relatório Municipal &mdash; <span>Ivaté-PR</span></div>
+                </div>
+                <a href="/" class="btn-back"><i class="ri-arrow-left-line"></i> Voltar ao Dashboard</a>
+            </div>
+            <div class="header-controls">
+                <div class="period-tabs">
+                    <button class="period-tab" data-periodo="dia" onclick="setPeriodo('dia')">Dia</button>
+                    <button class="period-tab active" data-periodo="mes" onclick="setPeriodo('mes')">Mês</button>
+                    <button class="period-tab" data-periodo="semana" onclick="setPeriodo('semana')">Semana</button>
+                    <button class="period-tab" data-periodo="ano" onclick="setPeriodo('ano')">Ano</button>
+                </div>
+                <div class="period-nav">
+                    <button class="nav-btn" onclick="navPeriodo(-1)" title="Período anterior"><i class="ri-arrow-left-s-line"></i></button>
+                    <div class="period-label" id="period-label">Carregando...</div>
+                    <button class="nav-btn" onclick="navPeriodo(1)" title="Próximo período"><i class="ri-arrow-right-s-line"></i></button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- LOADING -->
+    <div class="container" id="loading-screen">
+        <div class="loading-screen">
+            <div class="spinner"></div>
+            <div class="loading-text">Gerando relatório...</div>
+        </div>
+    </div>
+
+    <!-- EMPTY STATE -->
+    <div class="container hidden" id="empty-state">
+        <div class="empty-state">
+            <i class="ri-inbox-line"></i>
+            <p>Sem dados para este período</p>
+        </div>
+    </div>
+
+    <!-- REPORT CONTENT -->
+    <div class="container hidden" id="report-content">
+        <div class="report-content">
+
+            <!-- KPI CARDS -->
+            <div class="kpi-grid" id="kpi-grid">
+                <div class="kpi-card">
+                    <div class="kpi-label">Total Feedbacks</div>
+                    <div class="kpi-value" id="kpi-total">0</div>
+                    <div class="kpi-detail"><span id="kpi-total-var"></span> <span id="kpi-total-detail"></span></div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-label">Satisfação</div>
+                    <div class="kpi-value" id="kpi-satisfacao">0%</div>
+                    <div class="kpi-detail"><span id="kpi-sat-var"></span> <span id="kpi-sat-detail"></span></div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-label">Casos Resolvidos</div>
+                    <div class="kpi-value" id="kpi-resolvidos">0</div>
+                    <div class="kpi-detail"><span id="kpi-res-var"></span> <span id="kpi-res-detail"></span></div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-label">Tempo Médio Resolução</div>
+                    <div class="kpi-value" id="kpi-tempo">0h</div>
+                    <div class="kpi-detail"><span id="kpi-tempo-var"></span> <span id="kpi-tempo-detail"></span></div>
+                </div>
+            </div>
+
+            <!-- AI ANALYSIS -->
+            <div class="ai-section" id="ai-section">
+                <div class="ai-header">
+                    <div class="ai-badge"><i class="ri-shield-star-line"></i> Gerado por IA &middot; GPT-4o-mini</div>
+                    <div id="trend-badge"></div>
+                </div>
+                <div class="ai-text" id="ai-text">Carregando análise...</div>
+            </div>
+
+            <!-- CHARTS ROW -->
+            <div class="charts-row">
+                <div class="chart-card">
+                    <div class="chart-card-title">Distribuição de Sentimentos</div>
+                    <div class="donut-wrapper">
+                        <div class="donut-canvas-wrapper">
+                            <canvas id="sentiment-chart"></canvas>
+                            <div class="donut-center-label">
+                                <div class="donut-center-value" id="donut-center-val">0%</div>
+                                <div class="donut-center-text">Satisfação</div>
+                            </div>
+                        </div>
+                        <div class="donut-legend" id="donut-legend"></div>
+                    </div>
+                </div>
+                <div class="chart-card">
+                    <div class="chart-card-title">Volume por Período</div>
+                    <div class="chart-container">
+                        <canvas id="timeline-chart" height="200"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- CATEGORIES -->
+            <div class="section-title"><i class="ri-grid-line"></i> Categorias Detalhadas</div>
+            <div class="bars-section" id="categories-bars"></div>
+
+            <!-- REGIONS -->
+            <div class="section-title"><i class="ri-map-pin-line"></i> Regiões / Bairros</div>
+            <div class="bars-section" id="regions-bars"></div>
+
+            <!-- AI INSIGHTS -->
+            <div class="section-title"><i class="ri-lightbulb-line"></i> Insights da Inteligência Artificial</div>
+            <div class="insights-grid" id="insights-grid"></div>
+
+            <!-- TOP PROBLEMS -->
+            <div class="section-title"><i class="ri-alarm-warning-line"></i> Principais Problemas Reportados</div>
+            <div class="problems-list" id="problems-list" style="margin-bottom:32px"></div>
+
+            <!-- COMPARISON TABLE -->
+            <div class="section-title"><i class="ri-scales-3-line"></i> Comparativo com Período Anterior</div>
+            <div class="bars-section" style="padding:0;overflow:hidden">
+                <table class="comparison-table" id="comparison-table">
+                    <thead>
+                        <tr>
+                            <th>Métrica</th>
+                            <th style="text-align:center" id="comp-atual-label">Atual</th>
+                            <th style="text-align:center" id="comp-anterior-label">Anterior</th>
+                            <th style="text-align:center">Variação</th>
+                        </tr>
+                    </thead>
+                    <tbody id="comparison-body"></tbody>
+                </table>
+            </div>
+
+            <!-- FOOTER -->
+            <div class="report-footer">
+                <div class="generated" id="footer-generated">Relatório gerado automaticamente</div>
+                <div class="brand">Relatório gerado automaticamente por <a href="https://nodedata.com.br" target="_blank">Node Data</a> &middot; Powered by AI</div>
+                <div class="brand" style="margin-top:4px">&copy; 2026 Node Data &middot; Monitoramento inteligente de cidades</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- FAB -->
+    <button class="fab-print" onclick="window.print()" title="Exportar / Imprimir">
+        <i class="ri-printer-line"></i> Exportar / Imprimir
+    </button>
+
+    <script>
+        // === STATE ===
+        let currentPeriodo = 'mes';
+        let currentData = new Date().toISOString().split('T')[0];
+        let sentimentChart = null;
+        let timelineChart = null;
+
+        // === PERIOD CONTROLS ===
+        function setPeriodo(tipo) {
+            currentPeriodo = tipo;
+            currentData = new Date().toISOString().split('T')[0];
+            document.querySelectorAll('.period-tab').forEach(t => t.classList.remove('active'));
+            document.querySelector(`.period-tab[data-periodo="${tipo}"]`).classList.add('active');
+            loadReport();
+        }
+
+        function navPeriodo(direction) {
+            const d = new Date(currentData + 'T12:00:00');
+            switch (currentPeriodo) {
+                case 'dia': d.setDate(d.getDate() + direction); break;
+                case 'semana': d.setDate(d.getDate() + (direction * 7)); break;
+                case 'mes': d.setMonth(d.getMonth() + direction); break;
+                case 'ano': d.setFullYear(d.getFullYear() + direction); break;
+            }
+            currentData = d.toISOString().split('T')[0];
+            loadReport();
+        }
+
+        // === HELPERS ===
+        function variationHTML(valor, invertido = false) {
+            if (valor === 0 || valor === null || valor === undefined) return '<span class="variation neutral">= 0%</span>';
+            const positivo = invertido ? valor < 0 : valor > 0;
+            const cls = positivo ? 'up' : 'down';
+            const icon = positivo ? 'ri-arrow-up-line' : 'ri-arrow-down-line';
+            const sign = valor > 0 ? '+' : '';
+            return `<span class="variation ${cls}"><i class="${icon}"></i> ${sign}${valor}%</span>`;
+        }
+
+        function formatHours(h) {
+            if (h <= 0) return '—';
+            if (h < 1) return `${Math.round(h * 60)}min`;
+            if (h >= 24) return `${(h / 24).toFixed(1)}d`;
+            return `${h.toFixed(1)}h`;
+        }
+
+        // Colors for regions (rotating)
+        const REGION_COLORS = ['#3b82f6', '#22c55e', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#ef4444', '#84cc16', '#f97316', '#6366f1', '#14b8a6'];
+
+        // === MAIN LOADER ===
+        async function loadReport() {
+            document.getElementById('loading-screen').classList.remove('hidden');
+            document.getElementById('report-content').classList.add('hidden');
+            document.getElementById('empty-state').classList.add('hidden');
+
+            try {
+                const res = await fetch(`/api/relatorio?periodo=${currentPeriodo}&data=${currentData}`);
+                if (!res.ok) throw new Error('API error ' + res.status);
+                const data = await res.json();
+
+                if (data.kpis.total === 0 && data.kpis.total_anterior === 0) {
+                    document.getElementById('loading-screen').classList.add('hidden');
+                    document.getElementById('empty-state').classList.remove('hidden');
+                    document.getElementById('period-label').textContent = data.periodo.label;
+                    return;
+                }
+
+                renderReport(data);
+                document.getElementById('loading-screen').classList.add('hidden');
+                document.getElementById('report-content').classList.remove('hidden');
+            } catch (e) {
+                console.error('Erro ao carregar relatório:', e);
+                document.getElementById('loading-screen').innerHTML = `
+                    <div class="empty-state">
+                        <i class="ri-error-warning-line"></i>
+                        <p>Erro ao carregar relatório. <a href="javascript:loadReport()" style="color:var(--accent-primary)">Tentar novamente</a></p>
+                    </div>`;
+            }
+        }
+
+        // === RENDER FUNCTIONS ===
+        function renderReport(data) {
+            const k = data.kpis;
+            const p = data.periodo;
+
+            // Period label
+            document.getElementById('period-label').textContent = p.label;
+
+            // KPIs
+            document.getElementById('kpi-total').textContent = k.total.toLocaleString('pt-BR');
+            document.getElementById('kpi-total-var').innerHTML = variationHTML(k.variacao_total);
+            document.getElementById('kpi-total-detail').textContent = `vs ${k.total_anterior} anterior`;
+
+            document.getElementById('kpi-satisfacao').textContent = `${k.satisfacao}%`;
+            document.getElementById('kpi-sat-var').innerHTML = variationHTML(k.variacao_satisfacao);
+            document.getElementById('kpi-sat-detail').textContent = `vs ${k.satisfacao_anterior}% anterior`;
+
+            document.getElementById('kpi-resolvidos').textContent = k.resolvidos.toLocaleString('pt-BR');
+            document.getElementById('kpi-res-var').innerHTML = variationHTML(k.variacao_resolvidos);
+            document.getElementById('kpi-res-detail').textContent = `taxa: ${k.taxa_resolucao}%`;
+
+            document.getElementById('kpi-tempo').textContent = formatHours(k.tempo_medio_resolucao_horas);
+            const tempoVar = k.tempo_medio_resolucao_anterior > 0
+                ? Math.round(((k.tempo_medio_resolucao_horas - k.tempo_medio_resolucao_anterior) / k.tempo_medio_resolucao_anterior) * 100)
+                : 0;
+            document.getElementById('kpi-tempo-var').innerHTML = variationHTML(tempoVar, true);
+            document.getElementById('kpi-tempo-detail').textContent = `vs ${formatHours(k.tempo_medio_resolucao_anterior)} anterior`;
+
+            // AI Analysis
+            renderAI(data.ai_analise, p);
+
+            // Charts
+            renderSentimentChart(data.sentimentos, k.satisfacao);
+            renderTimelineChart(data.timeline, p);
+
+            // Categories
+            renderBars('categories-bars', data.categorias, c => c.cor);
+
+            // Regions
+            renderBars('regions-bars', data.regioes, (r, i) => REGION_COLORS[i % REGION_COLORS.length]);
+
+            // Insights
+            renderInsights(data.ai_analise);
+
+            // Top problems
+            renderProblems(data.top_problemas);
+
+            // Comparison table
+            renderComparison(data, p);
+
+            // Footer
+            if (data.gerado_em) {
+                const gd = new Date(data.gerado_em);
+                document.getElementById('footer-generated').textContent =
+                    `Relatório gerado em ${gd.toLocaleDateString('pt-BR')} às ${gd.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'})}`;
+            }
+        }
+
+        function renderAI(ai, periodo) {
+            const sec = document.getElementById('ai-section');
+            if (!ai || !ai.resumo_executivo) {
+                sec.classList.add('hidden');
+                return;
+            }
+            sec.classList.remove('hidden');
+            document.getElementById('ai-text').textContent = ai.resumo_executivo;
+
+            const trendMap = {
+                'melhora': { icon: 'ri-arrow-up-circle-line', label: 'Tendência de Melhora', cls: 'trend-melhora' },
+                'estavel': { icon: 'ri-subtract-line', label: 'Tendência Estável', cls: 'trend-estavel' },
+                'piora': { icon: 'ri-arrow-down-circle-line', label: 'Tendência de Piora', cls: 'trend-piora' }
+            };
+            const t = trendMap[ai.tendencia] || trendMap['estavel'];
+            document.getElementById('trend-badge').innerHTML = `<div class="trend-badge ${t.cls}"><i class="${t.icon}"></i> ${t.label}</div>`;
+        }
+
+        function renderSentimentChart(sentimentos, satisfacao) {
+            const order = ['Positivo', 'Neutro', 'Urgente', 'Critico'];
+            const colors = { 'Positivo': '#22c55e', 'Neutro': '#3b82f6', 'Urgente': '#f59e0b', 'Critico': '#ef4444' };
+            const vals = order.map(s => sentimentos[s] || 0);
+
+            // Center value
+            const satColor = satisfacao >= 60 ? '#22c55e' : satisfacao >= 40 ? '#f59e0b' : '#ef4444';
+            document.getElementById('donut-center-val').textContent = `${satisfacao}%`;
+            document.getElementById('donut-center-val').style.color = satColor;
+
+            // Legend
+            const legendEl = document.getElementById('donut-legend');
+            legendEl.innerHTML = order.map((s, i) =>
+                `<div class="legend-item">
+                    <span class="legend-dot" style="background:${colors[s]}"></span>
+                    <span>${s}</span>
+                    <span class="legend-count">${vals[i]}</span>
+                </div>`
+            ).join('');
+
+            // Chart
+            const ctx = document.getElementById('sentiment-chart').getContext('2d');
+            if (sentimentChart) sentimentChart.destroy();
+            sentimentChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: order,
+                    datasets: [{
+                        data: vals,
+                        backgroundColor: order.map(s => colors[s]),
+                        borderWidth: 0,
+                        hoverOffset: 8
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    cutout: '75%',
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            backgroundColor: '#1c1e26',
+                            titleColor: '#fff',
+                            bodyColor: '#8b949e',
+                            borderColor: '#23252e',
+                            borderWidth: 1,
+                            cornerRadius: 8,
+                            padding: 10
+                        }
+                    }
+                }
+            });
+        }
+
+        function renderTimelineChart(timeline, periodo) {
+            const ctx = document.getElementById('timeline-chart').getContext('2d');
+            if (timelineChart) timelineChart.destroy();
+
+            const gradient = ctx.createLinearGradient(0, 0, 0, 200);
+            gradient.addColorStop(0, 'rgba(5, 150, 105, 0.3)');
+            gradient.addColorStop(1, 'rgba(5, 150, 105, 0)');
+
+            timelineChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: timeline.labels,
+                    datasets: [
+                        {
+                            label: periodo.label,
+                            data: timeline.valores,
+                            borderColor: '#059669',
+                            backgroundColor: gradient,
+                            borderWidth: 2.5,
+                            fill: true,
+                            tension: 0.35,
+                            pointRadius: 3,
+                            pointBackgroundColor: '#059669',
+                            pointHoverRadius: 6
+                        },
+                        {
+                            label: periodo.anterior_label,
+                            data: timeline.valores_anterior,
+                            borderColor: 'rgba(139, 148, 158, 0.5)',
+                            borderWidth: 1.5,
+                            borderDash: [6, 4],
+                            fill: false,
+                            tension: 0.35,
+                            pointRadius: 0,
+                            pointHoverRadius: 4
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: {
+                        legend: {
+                            display: true,
+                            position: 'top',
+                            align: 'end',
+                            labels: { color: '#8b949e', font: { size: 11 }, boxWidth: 12, padding: 16 }
+                        },
+                        tooltip: {
+                            backgroundColor: '#1c1e26',
+                            titleColor: '#fff',
+                            bodyColor: '#8b949e',
+                            borderColor: '#23252e',
+                            borderWidth: 1,
+                            cornerRadius: 8,
+                            padding: 10
+                        }
+                    },
+                    scales: {
+                        x: {
+                            grid: { color: 'rgba(35, 37, 46, 0.5)', drawBorder: false },
+                            ticks: { color: '#8b949e', font: { size: 10 }, maxRotation: 0 }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            grid: { color: 'rgba(35, 37, 46, 0.5)', drawBorder: false },
+                            ticks: { color: '#8b949e', font: { size: 10 }, precision: 0 }
+                        }
+                    }
+                }
+            });
+        }
+
+        function renderBars(containerId, items, colorFn) {
+            const container = document.getElementById(containerId);
+            if (!items || items.length === 0) {
+                container.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-muted);font-size:13px">Sem dados</div>';
+                return;
+            }
+            const maxVal = Math.max(...items.map(i => i.count), 1);
+            const maxAnt = Math.max(...items.map(i => i.count_anterior || 0), 1);
+
+            container.innerHTML = items.map((item, idx) => {
+                const pct = (item.count / maxVal) * 100;
+                const pctAnt = ((item.count_anterior || 0) / maxVal) * 100;
+                const color = typeof colorFn === 'function' ? colorFn(item, idx) : '#8b5cf6';
+                const diff = item.count - (item.count_anterior || 0);
+                const diffPct = (item.count_anterior || 0) > 0
+                    ? Math.round((diff / item.count_anterior) * 100)
+                    : (item.count > 0 ? 100 : 0);
+                return `
+                    <div class="bar-row">
+                        <div class="bar-label">${item.nome}</div>
+                        <div class="bar-track">
+                            ${item.count_anterior > 0 ? `<div class="bar-fill-anterior" style="width:${pctAnt}%;background:${color}"></div>` : ''}
+                            <div class="bar-fill" style="width:${pct}%;background:${color}"></div>
+                        </div>
+                        <div class="bar-count" style="color:${color}">${item.count}</div>
+                        <div class="bar-variation">${variationHTML(diffPct)}</div>
+                    </div>`;
+            }).join('');
+        }
+
+        function renderInsights(ai) {
+            const grid = document.getElementById('insights-grid');
+            if (!ai) { grid.classList.add('hidden'); return; }
+            grid.classList.remove('hidden');
+
+            const sections = [
+                { key: 'pontos_positivos', cls: 'positivo', icon: 'ri-check-double-line', title: 'Pontos Positivos' },
+                { key: 'pontos_atencao', cls: 'atencao', icon: 'ri-alert-line', title: 'Pontos de Atenção' },
+                { key: 'recomendacoes', cls: 'recomendacao', icon: 'ri-lightbulb-flash-line', title: 'Recomendações' }
+            ];
+
+            grid.innerHTML = sections.map(s => {
+                const items = ai[s.key] || [];
+                const listHTML = items.length > 0
+                    ? `<ul class="insight-list">${items.map(i => `<li>${i}</li>`).join('')}</ul>`
+                    : '<p style="color:var(--text-muted);font-size:13px">Sem dados suficientes</p>';
+                return `
+                    <div class="insight-card ${s.cls}">
+                        <div class="insight-title"><i class="${s.icon}"></i> ${s.title}</div>
+                        ${listHTML}
+                    </div>`;
+            }).join('');
+
+            // Add regional/category highlights if available
+            if (ai.destaque_regional || ai.destaque_categoria) {
+                let extra = '';
+                if (ai.destaque_regional) extra += `<div class="problem-item" style="margin-bottom:8px"><i class="ri-map-pin-2-line" style="color:var(--accent-yellow);font-size:18px"></i><div class="problem-topic">${ai.destaque_regional}</div></div>`;
+                if (ai.destaque_categoria) extra += `<div class="problem-item"><i class="ri-folder-line" style="color:var(--accent-blue);font-size:18px"></i><div class="problem-topic">${ai.destaque_categoria}</div></div>`;
+                grid.insertAdjacentHTML('afterend', `<div style="margin-bottom:32px">${extra}</div>`);
+            }
+        }
+
+        function renderProblems(problems) {
+            const list = document.getElementById('problems-list');
+            if (!problems || problems.length === 0) {
+                list.innerHTML = '<div class="problem-item"><div class="problem-topic" style="color:var(--text-muted)">Sem problemas reportados neste período</div></div>';
+                return;
+            }
+            list.innerHTML = problems.map((p, i) => `
+                <div class="problem-item">
+                    <div class="problem-rank">${i + 1}</div>
+                    <div class="problem-topic">${p.topic}</div>
+                    <div class="problem-cat">${p.categoria}</div>
+                    <div class="problem-count">${p.count}x</div>
+                </div>
+            `).join('');
+        }
+
+        function renderComparison(data, periodo) {
+            document.getElementById('comp-atual-label').textContent = periodo.label;
+            document.getElementById('comp-anterior-label').textContent = periodo.anterior_label;
+
+            const k = data.kpis;
+            const rows = [
+                ['Total de Feedbacks', k.total, k.total_anterior, k.variacao_total, false],
+                ['Satisfação', `${k.satisfacao}%`, `${k.satisfacao_anterior}%`, k.variacao_satisfacao, false],
+                ['Casos Resolvidos', k.resolvidos, k.resolvidos_anterior, k.variacao_resolvidos, false],
+                ['Taxa de Resolução', `${k.taxa_resolucao}%`, `${k.taxa_resolucao_anterior}%`, null, false],
+                ['Tempo Médio Resolução', formatHours(k.tempo_medio_resolucao_horas), formatHours(k.tempo_medio_resolucao_anterior), null, true],
+                ['Feedbacks Críticos', k.criticos, '—', null, false],
+                ['Feedbacks Urgentes', k.urgentes, '—', null, false],
+            ];
+
+            document.getElementById('comparison-body').innerHTML = rows.map(([name, atual, anterior, varPct, invertido]) => `
+                <tr>
+                    <td class="metric-name">${name}</td>
+                    <td class="metric-value">${atual}</td>
+                    <td class="metric-value" style="color:var(--text-muted)">${anterior}</td>
+                    <td class="metric-value">${varPct !== null ? variationHTML(varPct, invertido) : '—'}</td>
+                </tr>
+            `).join('');
+        }
+
+        // === INIT ===
+        document.addEventListener('DOMContentLoaded', loadReport);
+    </script>
+</body>
+</html>
