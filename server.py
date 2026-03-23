@@ -5,7 +5,8 @@ import hashlib
 import csv
 import re
 from io import StringIO
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, redirect, url_for, session
+from functools import wraps
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
@@ -16,6 +17,7 @@ load_dotenv()
 
 app = Flask(__name__, static_folder='static', static_url_path='/static')
 app.config['TEMPLATES_AUTO_RELOAD'] = True
+app.secret_key = os.getenv("FLASK_SECRET_KEY", os.urandom(32).hex())
 
 # Config
 EVOLUTION_API_URL = os.getenv("EVOLUTION_API_URL")
@@ -1511,11 +1513,62 @@ MIN_MESSAGE_LENGTH = 3  # Mínimo de caracteres para processar
 
 # --- ROUTES ---
 
+## --- AUTENTICAÇÃO DO DASHBOARD ---
+
+def login_obrigatorio(f):
+    """Decorator que exige login para acessar a rota."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get('logado'):
+            # Para APIs, retorna 401 JSON; para páginas, redireciona
+            if request.path.startswith('/api/'):
+                return jsonify({"error": "unauthorized"}), 401
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    """Tela de login do dashboard."""
+    if session.get('logado'):
+        return redirect(url_for('index'))
+
+    erro = None
+    if request.method == "POST":
+        usuario = request.form.get("usuario", "").strip()
+        senha = request.form.get("senha", "").strip()
+        env_user = os.getenv("DASHBOARD_USER", "admin")
+        env_pass = os.getenv("DASHBOARD_PASSWORD", "")
+
+        if not env_pass:
+            erro = "Senha do dashboard não configurada no servidor."
+        elif usuario == env_user and senha == env_pass:
+            session['logado'] = True
+            session['usuario'] = usuario
+            session.permanent = True
+            app.permanent_session_lifetime = timedelta(days=7)
+            return redirect(url_for('index'))
+        else:
+            erro = "Usuário ou senha incorretos."
+
+    return render_template("login.html", erro=erro)
+
+
+@app.route("/logout")
+def logout():
+    """Encerra a sessão do dashboard."""
+    session.clear()
+    return redirect(url_for('login'))
+
+
 @app.route("/")
+@login_obrigatorio
 def index():
     return render_template("data_node.html")
 
 @app.route("/api/events")
+@login_obrigatorio
 def get_events():
     feedbacks = get_feedbacks()
     
@@ -1541,6 +1594,7 @@ ai_pulse_cache = {"data": None, "timestamp": None}
 intelligence_cache = {"data": None, "timestamp": None}
 
 @app.route("/api/ai-pulse")
+@login_obrigatorio
 def get_ai_pulse():
     """Retorna resumo inteligente da cidade via IA"""
     global ai_pulse_cache
@@ -1564,6 +1618,7 @@ def get_ai_pulse():
     return jsonify(result)
 
 @app.route("/api/intelligence")
+@login_obrigatorio
 def get_intelligence():
     global intelligence_cache
     now = datetime.utcnow()
@@ -1580,6 +1635,7 @@ def get_intelligence():
     return jsonify(result)
 
 @app.route("/api/export/csv")
+@login_obrigatorio
 def export_csv():
     """Exporta feedbacks como CSV para download"""
     feedbacks = get_feedbacks()
@@ -1608,6 +1664,7 @@ def export_csv():
     }
 
 @app.route("/api/export/json")
+@login_obrigatorio
 def export_json():
     """Exporta feedbacks como JSON para download"""
     feedbacks = get_feedbacks()
@@ -1616,6 +1673,7 @@ def export_json():
     }
 
 @app.route("/api/config", methods=["GET"])
+@login_obrigatorio
 def get_config_route():
     """Retorna config com contagens calculadas dinamicamente dos feedbacks"""
     config = get_config()
@@ -1645,6 +1703,7 @@ def get_config_route():
     return jsonify(config)
 
 @app.route("/api/insights")
+@login_obrigatorio
 def get_insights():
     """Retorna Top 3 Elogios e Problemas"""
     feedbacks = get_feedbacks()
@@ -1681,6 +1740,7 @@ def get_insights():
     })
 
 @app.route("/api/analytics/top")
+@login_obrigatorio
 def get_top_analytics():
     """Returns data in the format data_node.html expects"""
     res = get_insights().get_json()
@@ -2213,6 +2273,7 @@ def reset_moderation():
     return jsonify({"success": False, "message": "número não encontrado no estado de moderação"})
 
 @app.route("/api/feedback/<int:feedback_id>/status", methods=["PUT"])
+@login_obrigatorio
 def update_feedback_status(feedback_id):
     """Atualiza o status de um feedback"""
     data = request.json
