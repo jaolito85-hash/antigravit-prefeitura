@@ -2101,7 +2101,7 @@
                             <div class="fb-time" title="${e.timestamp}"><i class="ri-time-line"></i> ${formatarTempo(e.timestamp)}</div>
                         </div>
                         ${mediaThumb}
-                        <div class="fb-msg" style="margin-top:8px;">${firstMsg}</div>
+                        <div class="fb-msg" style="margin-top:8px;">${formatMessage(firstMsg)}</div>
                         ${updateBadge}
                         ${linkedBadge}
                         <div class="fb-footer" style="margin-top:10px;">
@@ -2134,7 +2134,7 @@
                         <span style="font-weight:600;color:var(--text-primary);font-size:0.85rem;">${c.category || 'Geral'}</span>
                         <span style="font-size:0.7rem;color:var(--text-muted);">${formatarTempo(c.timestamp)}</span>
                     </div>
-                    <div style="color:var(--text-secondary);font-size:0.8rem;line-height:1.4;">${preview}</div>
+                    <div style="color:var(--text-secondary);font-size:0.8rem;line-height:1.4;">${formatMessage(preview)}</div>
                     <div style="font-size:0.7rem;color:var(--text-muted);margin-top:6px;">${statusLabel}</div>
                 </div>`;
             }).join('');
@@ -2194,7 +2194,7 @@
                             <span>${idx === 0 ? 'Mensagem Original' : `Atualização ${idx}`}</span>
                             ${timeBadge}
                         </div>
-                        <div class="thread-content-text">${item.text}</div>
+                        <div class="thread-content-text">${formatMessage(item.text)}</div>
                     </div>
                 </div>`;
             }).join('');
@@ -2237,7 +2237,7 @@
             document.getElementById('thread-modal-body').innerHTML = `
                 <div class="thread-header">
                     <div>
-                        <div style="font-size:1.1rem; font-weight:700; display:flex; align-items:center; gap:8px;"><i class="ri-chat-3-fill" style="color:#059669;"></i> ${displayName}</div>
+                        <div style="font-size:1.1rem; font-weight:700; display:flex; align-items:center; gap:8px;"><i class="ri-chat-3-fill" style="color:#059669;"></i> ${formatMessage(displayName)}</div>
                         <div class="thread-sender">${displayPhone} ${whatsappLink} <span style="color:var(--border)">|</span> <span style="background:${urgencyColor}20;color:${urgencyColor};border:1px solid ${urgencyColor};font-size:0.7rem;font-weight:700;padding:2px 8px;border-radius:4px;">${e.category}</span></div>
                         <div style="margin-top:4px;">${e.rua ? `<span style="color:#34d399;font-size:0.75rem;"><i class="ri-map-pin-line"></i> ${e.rua}${e.region && e.region !== 'N/A' ? ', ' + e.region : ''}</span>` : (e.region && e.region !== 'N/A' ? `<span style="color:#6ee7b7;font-size:0.75rem;"><i class="ri-map-pin-line"></i> ${e.region}</span>` : `<span style="color:#f59e0b;font-size:0.75rem;"><i class="ri-map-pin-2-line"></i> Endereço não informado</span>`)}</div>
                     </div>
@@ -2503,7 +2503,7 @@
             document.getElementById('thread-modal-body').innerHTML = `
                 <div class="thread-header">
                     <div>
-                        <div style="font-size:1.1rem; font-weight:700; display:flex; align-items:center; gap:8px;"><i class="ri-chat-3-fill" style="color:#059669;"></i> ${displayName}</div>
+                        <div style="font-size:1.1rem; font-weight:700; display:flex; align-items:center; gap:8px;"><i class="ri-chat-3-fill" style="color:#059669;"></i> ${formatMessage(displayName)}</div>
                         <div class="thread-sender">${displayPhone} ${whatsappLink} <span style="color:var(--border)">|</span> <span style="background:${urgencyColor}20;color:${urgencyColor};border:1px solid ${urgencyColor};font-size:0.7rem;font-weight:700;padding:2px 8px;border-radius:4px;">${e.category}</span></div>
                         <div style="margin-top:4px;">${e.rua ? `<span style="color:#34d399;font-size:0.75rem;"><i class="ri-map-pin-line"></i> ${e.rua}${e.region && e.region !== 'N/A' ? ', ' + e.region : ''}</span>` : (e.region && e.region !== 'N/A' ? `<span style="color:#6ee7b7;font-size:0.75rem;"><i class="ri-map-pin-line"></i> ${e.region}</span>` : `<span style="color:#f59e0b;font-size:0.75rem;"><i class="ri-map-pin-2-line"></i> Endereço não informado</span>`)}</div>
                     </div>
@@ -3134,7 +3134,7 @@
             alertDiv.innerHTML = `
                 <button class="close-btn" onclick="this.parentElement.remove()">×</button>
                 <strong>${tipo === 'critico' ? '🚨 ALERTA CRÍTICO' : '⚠️ URGENTE'}</strong>
-                <p>"${feedback.message}"</p>
+                <p>"${formatMessage(feedback.message)}"</p>
                 <small>${feedback.category} - ${feedback.timestamp}</small>
             `;
 

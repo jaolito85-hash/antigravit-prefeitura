@@ -311,6 +311,164 @@ def register_moderation_infraction(remote_jid, text, reasons, score_increment, s
     save_moderation_state(state)
     return {"status": status, "reply": reply, "entry": entry}
 
+## --- CONSENTIMENTO LGPD (Voz Ativa) ---
+
+MENSAGEM_BOAS_VINDAS = (
+    "Olá! 👋 Bem-vindo(a) ao *Voz Ativa*, o canal direto da Prefeitura de Ivaté-PR "
+    "para ouvir você!\n\n"
+    "Aqui você pode enviar reclamações, sugestões e elogios sobre a cidade. "
+    "Suas mensagens serão analisadas pela equipe da prefeitura para melhorar "
+    "os serviços públicos.\n\n"
+    "Para participar, precisamos do seu consentimento para coletar e processar "
+    "suas mensagens de acordo com a LGPD (Lei Geral de Proteção de Dados).\n\n"
+    "Seus dados serão usados exclusivamente para atendimento municipal e "
+    "nunca serão compartilhados com terceiros.\n\n"
+    "Você concorda em participar do programa *Voz Ativa Ivaté-PR*?\n"
+    "Responda *SIM* para participar ou *NÃO* para cancelar."
+)
+
+MENSAGEM_CONSENTIMENTO_ACEITO = (
+    "Ótimo! 🎉 Seu consentimento foi registrado. Agora você faz parte do *Voz Ativa Ivaté-PR*!\n\n"
+    "Pode enviar sua mensagem — reclamação, sugestão ou elogio — que a Clara, "
+    "nossa atendente virtual, vai registrar e encaminhar para a equipe responsável.\n\n"
+    "Se quiser sair do programa a qualquer momento, envie *SAIR*."
+)
+
+MENSAGEM_CONSENTIMENTO_RECUSADO = (
+    "Entendemos! Sua privacidade é importante para nós. 🙏\n\n"
+    "Nenhum dado seu será coletado ou armazenado.\n"
+    "Se mudar de ideia, é só enviar uma mensagem novamente."
+)
+
+MENSAGEM_SAIU = (
+    "Você saiu do programa *Voz Ativa*. Seus dados de consentimento foram removidos. 🙏\n\n"
+    "Se quiser participar novamente no futuro, é só enviar uma mensagem."
+)
+
+
+def get_cidadao(telefone: str) -> dict | None:
+    """Busca cidadão pelo telefone no Supabase."""
+    sb = get_supabase()
+    if not sb:
+        return None
+    try:
+        resp = sb.table('cidadaos').select('*').eq('telefone', telefone).execute()
+        if resp.data:
+            return resp.data[0]
+    except Exception as e:
+        print(f"Erro ao buscar cidadão: {e}")
+    return None
+
+
+def registrar_cidadao(telefone: str, nome: str, consentimento: bool = False) -> dict | None:
+    """Registra cidadão novo ou atualiza nome."""
+    sb = get_supabase()
+    if not sb:
+        return None
+    try:
+        dados = {
+            "telefone": telefone,
+            "nome": nome,
+            "consentimento": consentimento,
+        }
+        if consentimento:
+            dados["consentido_em"] = datetime.utcnow().isoformat()
+        resp = sb.table('cidadaos').upsert(dados, on_conflict='telefone').execute()
+        if resp.data:
+            return resp.data[0]
+    except Exception as e:
+        print(f"Erro ao registrar cidadão: {e}")
+    return None
+
+
+def atualizar_consentimento(telefone: str, consentimento: bool) -> bool:
+    """Atualiza status de consentimento do cidadão."""
+    sb = get_supabase()
+    if not sb:
+        return False
+    try:
+        dados = {"consentimento": consentimento}
+        if consentimento:
+            dados["consentido_em"] = datetime.utcnow().isoformat()
+        else:
+            dados["consentido_em"] = None
+        sb.table('cidadaos').update(dados).eq('telefone', telefone).execute()
+        return True
+    except Exception as e:
+        print(f"Erro ao atualizar consentimento: {e}")
+        return False
+
+
+def is_resposta_sim(text: str) -> bool:
+    """Detecta se a resposta do cidadão é afirmativa."""
+    normalized = text.strip().lower()
+    respostas_sim = (
+        'sim', 'aceito', 'concordo', 'pode sim', 'claro',
+        'ok', 'quero', 'bora', 'vamos', 'topo', 'positivo',
+        's', 'yes', 'pode', 'com certeza', 'aceitar',
+    )
+    return normalized in respostas_sim or normalized.startswith('sim')
+
+
+def is_resposta_nao(text: str) -> bool:
+    """Detecta se a resposta do cidadão é negativa."""
+    normalized = text.strip().lower()
+    respostas_nao = (
+        'não', 'nao', 'n', 'no', 'recuso', 'cancelar',
+        'não quero', 'nao quero', 'não aceito', 'nao aceito',
+    )
+    return normalized in respostas_nao or normalized.startswith('não') or normalized.startswith('nao')
+
+
+def is_pedido_sair(text: str) -> bool:
+    """Detecta se o cidadão quer sair do programa."""
+    normalized = text.strip().lower()
+    return normalized in ('sair', 'quero sair', 'cancelar participação', 'cancelar participacao')
+
+
+def verificar_consentimento_webhook(remote_jid: str, push_name: str, text: str) -> dict | None:
+    """Verifica consentimento do cidadão no fluxo do webhook.
+
+    Retorna None se o cidadão já tem consentimento (fluxo normal continua).
+    Retorna dict com {'status': ..., 'handled': True} se tratou a mensagem aqui.
+    """
+    # Pedido de saída — funciona mesmo com consentimento ativo
+    if text and is_pedido_sair(text):
+        cidadao = get_cidadao(remote_jid)
+        if cidadao and cidadao.get('consentimento'):
+            atualizar_consentimento(remote_jid, False)
+            send_whatsapp_message(remote_jid, MENSAGEM_SAIU)
+            return {"status": "opt_out", "handled": True}
+
+    cidadao = get_cidadao(remote_jid)
+
+    # Cidadão já deu consentimento → fluxo normal
+    if cidadao and cidadao.get('consentimento'):
+        return None
+
+    # Cidadão existe mas ainda não consentiu → esperando resposta
+    if cidadao and not cidadao.get('consentimento'):
+        if text and is_resposta_sim(text):
+            atualizar_consentimento(remote_jid, True)
+            send_whatsapp_message(remote_jid, MENSAGEM_CONSENTIMENTO_ACEITO)
+            return {"status": "consent_granted", "handled": True}
+        elif text and is_resposta_nao(text):
+            send_whatsapp_message(remote_jid, MENSAGEM_CONSENTIMENTO_RECUSADO)
+            return {"status": "consent_denied", "handled": True}
+        else:
+            # Mensagem que não é sim/não → reenviar pergunta
+            send_whatsapp_message(
+                remote_jid,
+                "Para continuar, preciso da sua resposta: *SIM* para participar ou *NÃO* para cancelar."
+            )
+            return {"status": "consent_pending", "handled": True}
+
+    # Cidadão novo → registrar e enviar boas-vindas
+    registrar_cidadao(remote_jid, push_name, consentimento=False)
+    send_whatsapp_message(remote_jid, MENSAGEM_BOAS_VINDAS)
+    return {"status": "consent_requested", "handled": True}
+
+
 def save_json(filepath, data):
     """Fallback for local JSON files"""
     with open(filepath, 'w', encoding='utf-8') as f:
@@ -1047,27 +1205,34 @@ SOBRE PERGUNTAS DE ACOMPANHAMENTO (muito importante):
         return f"Olá! Sou a Clara, da Prefeitura de Ivaté. Recebi sua solicitação e abrimos o protocolo #{protocol_num}. Nossa equipe de {category} irá analisar. Poderia nos informar o local completo (bairro/rua)?"
 
 
+def mascarar_telefone(jid: str) -> str:
+    """Mascara telefone para logs, preservando apenas início e fim."""
+    if not jid:
+        return '****'
+    numero = jid.split('@')[0]
+    if len(numero) > 6:
+        return numero[:4] + '****' + numero[-4:]
+    return '****'
+
+
 def send_whatsapp_message(remote_jid, message):
     """Sends a text message using Evolution API."""
     if not EVOLUTION_API_URL or not EVOLUTION_API_KEY or not EVOLUTION_INSTANCE_NAME:
         print(f"❌ Evolution API not configured!")
         return
-    
+
     url = f"{EVOLUTION_API_URL}/message/sendText/{EVOLUTION_INSTANCE_NAME}"
     headers = {
         "apikey": EVOLUTION_API_KEY,
         "Content-Type": "application/json"
     }
     payload = {"number": remote_jid, "text": message}
-    
-    print(f"📤 Sending WhatsApp reply to: {remote_jid}")
-    print(f"📤 URL: {url}")
-    print(f"📤 Message: {message}")
-    
+
+    print(f"📤 Sending WhatsApp reply to: {mascarar_telefone(remote_jid)}")
+
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=10)
         print(f"📤 Response Status: {response.status_code}")
-        print(f"📤 Response Body: {response.text[:200]}")
     except Exception as e:
         print(f"❌ Error sending message: {e}")
 
@@ -1661,11 +1826,18 @@ def webhook():
             remote_jid = key.get("remoteJid")
             push_name = msg_data.get("pushName", "Cidadão")
             message_content = msg_data.get("message", {})
-            
+
             text = message_content.get("conversation") or message_content.get("extendedTextMessage", {}).get("text")
             native_transcription = message_content.get("transcription")
             audio_msg = message_content.get("audioMessage")
-            
+
+            # --- CONSENTIMENTO LGPD ---
+            # Verifica antes de qualquer processamento (inclusive áudio)
+            if remote_jid:
+                consent_result = verificar_consentimento_webhook(remote_jid, push_name, text)
+                if consent_result and consent_result.get("handled"):
+                    return jsonify({"status": consent_result["status"]}), 200
+
             # Audio Processing
             if not text and audio_msg and remote_jid:
                 seconds = audio_msg.get("seconds", 0)
@@ -1715,10 +1887,10 @@ def webhook():
                     return jsonify({"status": restriction["status"]}), 200
 
                 if len(text.strip()) < MIN_MESSAGE_LENGTH:
-                    print(f"[SPAM] Message too short ({len(text)} chars): {text}")
+                    print(f"[SPAM] Message too short ({len(text)} chars)")
                     return jsonify({"status": "ignored_too_short"}), 200
                 if is_emoji_only(text):
-                    print(f"[SPAM] Emoji-only message ignored: {text}")
+                    print(f"[SPAM] Emoji-only message ignored")
                     return jsonify({"status": "ignored_emoji_only"}), 200
                 abuse = analyze_abuse_message(text)
                 if abuse["score"] > 0:
@@ -1732,7 +1904,7 @@ def webhook():
                     send_whatsapp_message(remote_jid, moderation["reply"])
                     return jsonify({"status": moderation["status"]}), 200
                 if is_rate_limited(remote_jid):
-                    print(f"[RATE-LIMIT] {remote_jid} exceeded {RATE_LIMIT_MAX} msgs in {RATE_LIMIT_WINDOW}s")
+                    print(f"[RATE-LIMIT] {mascarar_telefone(remote_jid)} exceeded {RATE_LIMIT_MAX} msgs in {RATE_LIMIT_WINDOW}s")
                     # Não registra como abuso — rate limit é proteção técnica, não comportamental
                     send_whatsapp_message(remote_jid, "Recebi muitas mensagens em seguida. Aguarde um momento e tente novamente.")
                     return jsonify({"status": "rate_limited"}), 200
@@ -1746,7 +1918,7 @@ def webhook():
                     for fb in feedbacks
                 }
                 if msg_hash in existing_hashes:
-                    print(f"[CACHE] Ignored Duplicate: {text}")
+                    print(f"[CACHE] Ignored Duplicate message")
                     return jsonify({"status": "ignored_duplicate"}), 200
                 
                 # --- SMART THREADING LOGIC ---
@@ -1832,7 +2004,7 @@ def webhook():
                         return jsonify({"status": "updated_existing_location"}), 200
 
                 # --- CLASSIFY FIRST (needed for smart threading) ---
-                print(f"Processing Report: {text}")
+                print(f"Processing Report from {mascarar_telefone(remote_jid)}")
                 ia_result = classificar_com_ia(text)
                 if ia_result:
                     sentimento = ia_result.get('sentimento', 'Neutro')
@@ -1994,13 +2166,14 @@ REGRAS ABSOLUTAS:
         print(f"❌❌ [WEBHOOK CRITICAL] Unhandled error: {e}")
         import traceback
         traceback.print_exc()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"status": "error", "message": "Erro interno no processamento"}), 500
 
 @app.route("/api/admin/moderation", methods=["GET"])
 def list_moderation():
     """Lista todos os números com restrição ativa (mute ou bloqueio)."""
     admin_key = os.getenv("ADMIN_KEY", "")
-    if not admin_key or request.args.get("key") != admin_key:
+    provided_key = request.headers.get("X-Admin-Key") or request.args.get("key")
+    if not admin_key or provided_key != admin_key:
         return jsonify({"error": "unauthorized"}), 401
     state = load_moderation_state()
     now = datetime.utcnow()
@@ -2061,7 +2234,11 @@ def update_feedback_status(feedback_id):
 
 @app.route("/api/debug")
 def debug_env():
-    """Endpoint para verificar variáveis de ambiente"""
+    """Endpoint para verificar variáveis de ambiente (protegido por ADMIN_KEY)."""
+    admin_key = os.getenv("ADMIN_KEY", "")
+    provided_key = request.headers.get("X-Admin-Key") or request.args.get("key")
+    if not admin_key or provided_key != admin_key:
+        return jsonify({"error": "unauthorized"}), 401
     return jsonify({
         "status": "online",
         "app": "Prefeitura Node Data",
@@ -2069,8 +2246,8 @@ def debug_env():
             "SUPABASE_URL": "OK" if os.getenv("SUPABASE_URL") else "MISSING",
             "SUPABASE_KEY": "OK" if os.getenv("SUPABASE_KEY") else "MISSING",
             "OPENAI_API_KEY": "OK" if os.getenv("OPENAI_API_KEY") else "MISSING",
-            "EVOLUTION_API_URL": os.getenv("EVOLUTION_API_URL", "MISSING"),
-            "EVOLUTION_INSTANCE": os.getenv("EVOLUTION_INSTANCE_NAME", "MISSING"),
+            "EVOLUTION_API_URL": "OK" if os.getenv("EVOLUTION_API_URL") else "MISSING",
+            "EVOLUTION_INSTANCE": "OK" if os.getenv("EVOLUTION_INSTANCE_NAME") else "MISSING",
             "EVOLUTION_KEY_SET": "YES" if os.getenv("EVOLUTION_API_KEY") else "NO"
         }
     })
