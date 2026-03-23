@@ -17,7 +17,12 @@ load_dotenv()
 
 app = Flask(__name__, static_folder='static', static_url_path='/static')
 app.config['TEMPLATES_AUTO_RELOAD'] = True
-app.secret_key = os.getenv("FLASK_SECRET_KEY", os.urandom(32).hex())
+app.secret_key = os.getenv("FLASK_SECRET_KEY", "TROQUE-ESTA-CHAVE-EM-PRODUCAO")
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+
+# Webhook Secret (Evolution API deve enviar este header)
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
 
 # Config
 EVOLUTION_API_URL = os.getenv("EVOLUTION_API_URL")
@@ -2069,6 +2074,50 @@ def is_emoji_only(text):
 
 MIN_MESSAGE_LENGTH = 3  # Mínimo de caracteres para processar
 
+# Saudações comuns que NÃO devem gerar card de feedback
+SAUDACOES = {
+    'oi', 'ola', 'olá', 'bom dia', 'boa tarde', 'boa noite',
+    'bom dia!', 'boa tarde!', 'boa noite!', 'oi!', 'olá!', 'ola!',
+    'hey', 'e ai', 'e aí', 'eai', 'fala', 'salve', 'opa', 'opa!',
+    'hello', 'hi', 'oie', 'oii', 'oiii', 'oi oi', 'bom diaa',
+    'boa tardee', 'boa noitee', 'tudo bem', 'tudo bem?', 'como vai',
+    'oi tudo bem', 'oi tudo bem?', 'ola tudo bem', 'ola tudo bem?',
+    'oi bom dia', 'oi boa tarde', 'oi boa noite',
+}
+
+RESPOSTA_SAUDACAO = (
+    "Olá! 👋 Sou a *Clara*, assistente virtual do programa *Voz Ativa* da Prefeitura de Ivaté.\n\n"
+    "Você pode me enviar:\n"
+    "📝 Uma *reclamação* ou *sugestão* sobre a cidade\n"
+    "👏 Um *elogio* a algum serviço público\n"
+    "🔍 Um *número de protocolo* para consultar o status\n\n"
+    "Como posso ajudar?"
+)
+
+# Tipos de mensagem não suportados (resposta amigável)
+TIPOS_NAO_SUPORTADOS = {
+    'imageMessage', 'stickerMessage', 'locationMessage',
+    'contactMessage', 'documentMessage', 'contactsArrayMessage',
+    'listResponseMessage', 'buttonsResponseMessage',
+}
+
+
+def is_saudacao(text: str) -> bool:
+    """Detecta se a mensagem é apenas uma saudação."""
+    if not text:
+        return False
+    normalized = text.strip().lower().rstrip('!?.,:;')
+    return normalized in SAUDACOES
+
+
+def detectar_tipo_nao_suportado(message_content: dict) -> str | None:
+    """Retorna o tipo da mensagem se for não suportado, ou None."""
+    for tipo in TIPOS_NAO_SUPORTADOS:
+        if tipo in message_content:
+            return tipo
+    return None
+
+
 # --- ROUTES ---
 
 ## --- AUTENTICAÇÃO DO DASHBOARD ---
@@ -2490,25 +2539,35 @@ def append_to_feedback(feedback_id, old_message, new_content, new_region=None, n
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
+    # Validação de origem do webhook
+    if WEBHOOK_SECRET:
+        incoming_secret = request.headers.get("X-Webhook-Secret", "")
+        if incoming_secret != WEBHOOK_SECRET:
+            return jsonify({"error": "unauthorized"}), 401
+
     try:
         data = request.json
     except Exception:
         return jsonify({"error": "invalid_json"}), 400
-    
+
     try:
         event_type = data.get("type") or data.get("event")
-        
+
         if event_type in ["message", "messages.upsert", "MESSAGES_UPSERT"]:
             msg_data = data.get("data", {})
             print(f"DEBUG [Prefeitura]: Incoming event {event_type}")
-            print(f"DEBUG [Prefeitura]: Payload message keys: {list(msg_data.get('message', {}).keys())}")
-            
+
             key = msg_data.get("key", {})
-            
+
             if key.get("fromMe"):
                 return jsonify({"status": "ignored_self"}), 200
 
             remote_jid = key.get("remoteJid")
+
+            # Ignora mensagens de grupo — processa apenas conversas privadas
+            if remote_jid and remote_jid.endswith("@g.us"):
+                return jsonify({"status": "ignored_group"}), 200
+
             push_name = msg_data.get("pushName", "Cidadão")
             message_content = msg_data.get("message", {})
 
@@ -2517,18 +2576,47 @@ def webhook():
             audio_msg = message_content.get("audioMessage")
 
             # --- CONSENTIMENTO LGPD ---
-            # Verifica antes de qualquer processamento (inclusive áudio)
+            # Para áudio, tenta transcrever ANTES de checar consentimento
+            # para que o cidadão possa dizer "sim" por áudio
+            consent_text = text
+            if not consent_text and audio_msg and remote_jid:
+                if native_transcription:
+                    consent_text = native_transcription
+
             if remote_jid:
-                consent_result = verificar_consentimento_webhook(remote_jid, push_name, text)
+                consent_result = verificar_consentimento_webhook(remote_jid, push_name, consent_text)
                 if consent_result and consent_result.get("handled"):
                     return jsonify({"status": consent_result["status"]}), 200
 
+            # --- TIPOS NÃO SUPORTADOS (foto, sticker, localização, etc) ---
+            if not text and not audio_msg and remote_jid:
+                tipo = detectar_tipo_nao_suportado(message_content)
+                if tipo:
+                    if tipo == 'imageMessage':
+                        send_whatsapp_message(
+                            remote_jid,
+                            "📷 Recebi sua foto! No momento consigo processar apenas mensagens de *texto* e *áudio*.\n\n"
+                            "Por favor, descreva o problema por escrito (ex: \"Buraco na Rua Tal, perto do mercado\") "
+                            "para que eu possa registrar corretamente."
+                        )
+                    else:
+                        send_whatsapp_message(
+                            remote_jid,
+                            "No momento consigo processar apenas mensagens de *texto* e *áudio*.\n"
+                            "Por favor, descreva sua solicitação por escrito."
+                        )
+                    return jsonify({"status": f"unsupported_{tipo}"}), 200
+
             # --- CONSULTA DE PROTOCOLO ---
-            # Cidadão pode consultar status enviando "protocolo 20260015" ou "#20260015"
             if text and remote_jid:
                 protocol_result = responder_consulta_protocolo(remote_jid, text)
                 if protocol_result and protocol_result.get("handled"):
                     return jsonify({"status": protocol_result["status"]}), 200
+
+            # --- SAUDAÇÕES ---
+            if text and remote_jid and is_saudacao(text):
+                send_whatsapp_message(remote_jid, RESPOSTA_SAUDACAO)
+                return jsonify({"status": "greeting_replied"}), 200
 
             # Audio Processing
             if not text and audio_msg and remote_jid:
