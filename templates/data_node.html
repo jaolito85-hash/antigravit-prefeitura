@@ -2699,6 +2699,9 @@
 
         // --- HANDOFF FUNCTIONS ---
         async function assumirAtendimento(feedbackId) {
+            // Desabilita botão para evitar cliques múltiplos
+            const btn = event?.target?.closest?.('.handoff-btn');
+            if (btn) { btn.disabled = true; btn.innerHTML = '<i class="ri-loader-4-line"></i> Assumindo...'; }
             try {
                 const res = await fetch(`/api/feedback/${feedbackId}/handoff`, {
                     method: 'POST',
@@ -2706,14 +2709,15 @@
                 });
                 const data = await res.json();
                 if (data.success) {
-                    // Refresh feedbacks and reopen modal
                     await reloadAndReopenModal(feedbackId);
                 } else {
                     alert('Erro ao assumir atendimento: ' + (data.error || 'desconhecido'));
+                    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="ri-user-voice-fill"></i> Assumir Atendimento'; }
                 }
             } catch (err) {
                 console.error('Erro handoff:', err);
                 alert('Erro de conexão ao assumir atendimento');
+                if (btn) { btn.disabled = false; btn.innerHTML = '<i class="ri-user-voice-fill"></i> Assumir Atendimento'; }
             }
         }
 

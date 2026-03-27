@@ -2888,6 +2888,20 @@ def webhook():
                 if foi_truncado:
                     send_whatsapp_message(remote_jid, "⚠️ Sua mensagem era muito longa e foi resumida. Tente ser mais breve (máximo ~10 linhas).")
 
+                # --- HANDOFF CHECK (antes do duplicate hash para não perder mensagens) ---
+                handoff_feedback = get_active_feedback(remote_jid)
+                if handoff_feedback and handoff_feedback.get('handoff_operator'):
+                    operator_name = handoff_feedback['handoff_operator']
+                    print(f"[HANDOFF] Feedback {handoff_feedback['id']} controlado por {operator_name} — Clara silenciada")
+                    # Registra a mensagem na conversa, sem resposta automática
+                    current_message = handoff_feedback.get('message', '')
+                    updated_message = append_conversation_entry(current_message, 'client', text)
+                    update_feedback(handoff_feedback['id'], {
+                        'message': updated_message,
+                        'updated_at': datetime.utcnow().isoformat()
+                    })
+                    return jsonify({"status": "handoff_active", "operator": operator_name}), 200
+
                 feedbacks = get_feedbacks()
                 msg_hash = hashlib.md5(f"{text}{remote_jid}".encode()).hexdigest()
                 existing_hashes = {
@@ -2899,23 +2913,10 @@ def webhook():
                 if msg_hash in existing_hashes:
                     print(f"[CACHE] Ignored Duplicate message")
                     return jsonify({"status": "ignored_duplicate"}), 200
-                
+
                 # --- SMART THREADING LOGIC ---
                 active_feedback = get_active_feedback(remote_jid)
                 linked_from_id = None
-
-                # --- HANDOFF: se operador humano assumiu, não responde com IA ---
-                if active_feedback and active_feedback.get('handoff_operator'):
-                    operator_name = active_feedback['handoff_operator']
-                    print(f"[HANDOFF] Feedback {active_feedback['id']} controlado por {operator_name} — Clara silenciada")
-                    # Apenas registra a mensagem na conversa, sem resposta automática
-                    current_message = active_feedback.get('message', '')
-                    updated_message = append_conversation_entry(current_message, 'client', text)
-                    update_feedback(active_feedback['id'], {
-                        'message': updated_message,
-                        'updated_at': datetime.utcnow().isoformat()
-                    })
-                    return jsonify({"status": "handoff_active", "operator": operator_name}), 200
 
                 # Fluxo especial: Clara pediu rua/bairro e o cidadao respondeu.
                 # Nessa etapa nunca deve abrir card novo.
@@ -3262,6 +3263,10 @@ def handoff_feedback(feedback_id):
 
     if not feedback:
         return jsonify({"error": "Feedback não encontrado"}), 404
+
+    # Se já está em handoff, não duplica
+    if feedback.get('handoff_operator'):
+        return jsonify({"success": True, "operator": feedback['handoff_operator'], "already": True})
 
     # Atualiza feedback com operador e muda status para em_andamento
     updates = {
