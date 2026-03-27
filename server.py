@@ -2718,7 +2718,8 @@ def append_to_feedback(feedback_id, old_message, new_content, new_region=None, n
         return False
 
 @app.route("/webhook", methods=["POST"])
-def webhook():
+@app.route("/webhook/<path:event_type>", methods=["POST"])
+def webhook(event_type=None):
     # Validação de origem do webhook
     if WEBHOOK_SECRET:
         incoming_secret = request.headers.get("X-Webhook-Secret", "")
