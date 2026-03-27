@@ -3302,6 +3302,146 @@ def update_feedback_status(feedback_id):
     else:
         return jsonify({"error": "Feedback não encontrado"}), 404
 
+@app.route("/api/feedback/<int:feedback_id>/resolve-draft", methods=["POST"])
+@login_obrigatorio
+def resolve_draft(feedback_id):
+    """Gera rascunho de mensagem de resolução usando IA, baseado na conversa."""
+    sb = get_supabase()
+    feedback = None
+    if sb:
+        try:
+            resp = sb.table('feedbacks').select('*').eq('id', feedback_id).limit(1).execute()
+            if resp.data:
+                feedback = resp.data[0]
+        except Exception as e:
+            print(f"Erro ao buscar feedback para resolve-draft: {e}")
+
+    if not feedback:
+        return jsonify({"error": "Feedback não encontrado"}), 404
+
+    # Monta resumo da conversa
+    conversation = parse_feedback_conversation(feedback.get('message', ''))
+    conv_lines = []
+    for entry in conversation:
+        role_label = "Cidadão" if entry.get('role') == 'client' else ("Atendente" if entry.get('role') == 'operator' else "Clara")
+        conv_lines.append(f"{role_label}: {entry.get('text', '')}")
+    conv_summary = "\n".join(conv_lines[-10:])  # últimas 10 mensagens
+
+    categoria = feedback.get('category', 'Geral')
+    protocolo = feedback.get('protocol', '')
+    nome = feedback.get('name', 'Cidadão')
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        # Fallback sem IA
+        draft = (
+            f"Olá{', ' + nome.split()[0] if nome and nome != 'Cidadão' else ''}! "
+            f"Sua solicitação (protocolo #{protocolo}) na área de {categoria} foi resolvida pela equipe da Prefeitura de Ivaté. "
+            f"Agradecemos por usar o Voz Ativa!"
+        )
+        return jsonify({"draft": draft})
+
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key)
+
+        prompt = f"""Você é um redator da Prefeitura de Ivaté-PR. Gere uma mensagem de RESOLUÇÃO para enviar ao cidadão via WhatsApp.
+
+CONTEXTO DA CONVERSA:
+{conv_summary}
+
+DADOS:
+- Categoria: {categoria}
+- Protocolo: #{protocolo}
+- Nome do cidadão: {nome}
+
+REGRAS:
+- Máximo 3-4 frases curtas e diretas.
+- Comece com "Olá" e o primeiro nome do cidadão (se disponível).
+- Informe que a solicitação foi RESOLVIDA.
+- Resuma brevemente o que foi feito (baseado no contexto da conversa).
+- Mencione o protocolo de forma natural.
+- Agradeça pelo uso do Voz Ativa.
+- Tom: profissional, acolhedor, positivo.
+- NÃO invente detalhes — se não souber o que foi feito, diga "a equipe responsável atendeu sua solicitação".
+- NÃO use emojis excessivos (máximo 1-2)."""
+
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "Você redige mensagens oficiais curtas para a Prefeitura de Ivaté-PR."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=200,
+            temperature=0.4
+        )
+        draft = resp.choices[0].message.content.strip()
+    except Exception as e:
+        print(f"Erro ao gerar draft de resolução: {e}")
+        draft = (
+            f"Olá{', ' + nome.split()[0] if nome and nome != 'Cidadão' else ''}! "
+            f"Sua solicitação (protocolo #{protocolo}) na área de {categoria} foi resolvida pela equipe da Prefeitura de Ivaté. "
+            f"Agradecemos por usar o Voz Ativa!"
+        )
+
+    return jsonify({"draft": draft})
+
+
+@app.route("/api/feedback/<int:feedback_id>/resolve", methods=["POST"])
+@login_obrigatorio
+def resolve_feedback(feedback_id):
+    """Marca feedback como resolvido e envia mensagem de resolução ao cidadão."""
+    data = request.json
+    message = (data.get('message') or '').strip()
+    notify = data.get('notify', True)
+
+    operator_name = session.get('usuario', 'Atendente')
+
+    sb = get_supabase()
+    feedback = None
+    if sb:
+        try:
+            resp = sb.table('feedbacks').select('*').eq('id', feedback_id).limit(1).execute()
+            if resp.data:
+                feedback = resp.data[0]
+        except Exception as e:
+            print(f"Erro ao buscar feedback para resolve: {e}")
+
+    if not feedback:
+        return jsonify({"error": "Feedback não encontrado"}), 404
+
+    # Atualiza status para resolvido
+    current_message = feedback.get('message', '')
+
+    # Registra nota de resolução na conversa
+    resolve_note = f"✅ Chamado resolvido por {operator_name}"
+    updated_message = append_conversation_entry(current_message, 'operator', resolve_note)
+
+    if notify and message:
+        # Registra a mensagem de resolução na conversa
+        updated_message = append_conversation_entry(updated_message, 'operator', message)
+
+    updates = {
+        'status': 'resolvido',
+        'resolved_at': datetime.utcnow().isoformat(),
+        'handoff_operator': None,
+        'message': updated_message,
+        'updated_at': datetime.utcnow().isoformat()
+    }
+
+    if update_feedback(feedback_id, updates):
+        # Envia no WhatsApp se solicitado
+        if notify and message:
+            remote_jid = feedback.get('sender', '')
+            if remote_jid:
+                whatsapp_msg = f"*Prefeitura de Ivaté:*\n{message}"
+                send_whatsapp_message(remote_jid, whatsapp_msg)
+
+        return jsonify({"success": True})
+    else:
+        return jsonify({"error": "Erro ao atualizar feedback"}), 500
+
+
 @app.route("/api/feedback/<int:feedback_id>/handoff", methods=["POST"])
 @login_obrigatorio
 def handoff_feedback(feedback_id):

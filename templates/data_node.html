@@ -606,6 +606,96 @@
             cursor: not-allowed;
         }
 
+        .resolve-panel {
+            border-top: 1px solid var(--border);
+            margin-top: 16px;
+            padding-top: 16px;
+            animation: slideIn 0.25s ease-out;
+        }
+
+        .resolve-panel-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 12px;
+            font-size: 0.9rem;
+            font-weight: 700;
+            color: #10b981;
+        }
+
+        .resolve-textarea {
+            width: 100%;
+            background: #111827;
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            border-radius: 10px;
+            padding: 12px 14px;
+            color: #d1d5db;
+            font-size: 0.88rem;
+            resize: vertical;
+            outline: none;
+            min-height: 80px;
+            max-height: 200px;
+            line-height: 1.5;
+            box-sizing: border-box;
+        }
+
+        .resolve-textarea:focus {
+            border-color: rgba(16, 185, 129, 0.6);
+        }
+
+        .resolve-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 10px;
+            flex-wrap: wrap;
+        }
+
+        .resolve-btn {
+            padding: 10px 18px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.82rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s;
+            border: none;
+        }
+
+        .resolve-btn.primary {
+            background: linear-gradient(135deg, #059669, #047857);
+            color: white;
+        }
+
+        .resolve-btn.primary:hover {
+            opacity: 0.85;
+        }
+
+        .resolve-btn.secondary {
+            background: transparent;
+            color: var(--text-muted);
+            border: 1px solid var(--border);
+        }
+
+        .resolve-btn.secondary:hover {
+            background: var(--bg-hover);
+        }
+
+        .resolve-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .resolve-loading {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #6ee7b7;
+            font-size: 0.82rem;
+            padding: 12px 0;
+        }
+
         .chat-time {
             font-size: 0.72rem;
             color: var(--text-muted);
@@ -1217,6 +1307,11 @@
 
         .alerta-critico .close-btn:hover {
             opacity: 1;
+        }
+
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
         }
 
         @keyframes slideIn {
@@ -2646,7 +2741,7 @@
                     <div id="status-menu-modal-${e.id}" class="status-menu hidden" style="position:absolute; right:0; bottom:100%; background:var(--bg-card); border:1px solid var(--border); border-radius:6px; padding:4px; z-index:200; min-width:140px; margin-bottom:4px;">
                         <div onclick="updateStatus(${e.id}, 'aberto'); closeThreadModal()" style="padding:8px 12px; cursor:pointer; border-radius:4px; display:flex; align-items:center; gap:6px; color:#EF4444;" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background='transparent'"><i class="ri-error-warning-line"></i> Aberto</div>
                         <div onclick="updateStatus(${e.id}, 'em_andamento'); closeThreadModal()" style="padding:8px 12px; cursor:pointer; border-radius:4px; display:flex; align-items:center; gap:6px; color:#F59E0B;" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background='transparent'"><i class="ri-loader-4-line"></i> Em Andamento</div>
-                        <div onclick="updateStatus(${e.id}, 'resolvido'); closeThreadModal()" style="padding:8px 12px; cursor:pointer; border-radius:4px; display:flex; align-items:center; gap:6px; color:#10B981;" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background='transparent'"><i class="ri-checkbox-circle-line"></i> Resolvido</div>
+                        <div onclick="abrirPainelResolucao(${e.id})" style="padding:8px 12px; cursor:pointer; border-radius:4px; display:flex; align-items:center; gap:6px; color:#10B981;" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background='transparent'"><i class="ri-checkbox-circle-line"></i> Resolvido</div>
                     </div>
                 </div>` : `<span style="font-size:0.8rem; color:${urgencyColor};"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${urgencyColor};margin-right:5px;"></span>${e.urgency || 'Neutro'}</span>`;
 
@@ -2838,6 +2933,127 @@
             }
             // Reopen modal with fresh cache
             openThreadModal(feedbackId);
+        }
+
+        // --- RESOLUÇÃO COM NOTIFICAÇÃO ---
+        async function abrirPainelResolucao(feedbackId) {
+            // Fecha o menu de status
+            document.querySelectorAll('.status-menu').forEach(m => m.classList.add('hidden'));
+
+            // Verifica se já existe um painel aberto
+            const existing = document.getElementById(`resolve-panel-${feedbackId}`);
+            if (existing) { existing.remove(); return; }
+
+            // Insere o painel antes do thread-footer
+            const footer = document.querySelector('.thread-footer');
+            if (!footer) return;
+
+            const panel = document.createElement('div');
+            panel.id = `resolve-panel-${feedbackId}`;
+            panel.className = 'resolve-panel';
+            panel.innerHTML = `
+                <div class="resolve-panel-header">
+                    <i class="ri-checkbox-circle-line"></i> Resolver Chamado
+                </div>
+                <div class="resolve-loading" id="resolve-loading-${feedbackId}">
+                    <i class="ri-loader-4-line" style="animation: spin 1s linear infinite;"></i>
+                    Gerando mensagem de encerramento...
+                </div>
+                <textarea class="resolve-textarea hidden" id="resolve-msg-${feedbackId}" placeholder="Mensagem de resolução para o cidadão..."></textarea>
+                <div class="resolve-actions hidden" id="resolve-actions-${feedbackId}">
+                    <button class="resolve-btn primary" onclick="resolverComNotificacao(${feedbackId})">
+                        <i class="ri-send-plane-2-fill"></i> Enviar e Resolver
+                    </button>
+                    <button class="resolve-btn secondary" onclick="resolverSemNotificar(${feedbackId})">
+                        <i class="ri-checkbox-circle-line"></i> Resolver sem notificar
+                    </button>
+                    <button class="resolve-btn secondary" onclick="document.getElementById('resolve-panel-${feedbackId}').remove()">
+                        <i class="ri-close-line"></i> Cancelar
+                    </button>
+                </div>
+            `;
+            footer.parentNode.insertBefore(panel, footer);
+
+            // Pede draft à IA
+            try {
+                const res = await fetch(`/api/feedback/${feedbackId}/resolve-draft`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const data = await res.json();
+                const textarea = document.getElementById(`resolve-msg-${feedbackId}`);
+                const loading = document.getElementById(`resolve-loading-${feedbackId}`);
+                const actions = document.getElementById(`resolve-actions-${feedbackId}`);
+
+                if (textarea && loading && actions) {
+                    textarea.value = data.draft || '';
+                    loading.classList.add('hidden');
+                    textarea.classList.remove('hidden');
+                    actions.classList.remove('hidden');
+                    textarea.focus();
+                }
+            } catch (err) {
+                console.error('Erro ao gerar draft:', err);
+                const loading = document.getElementById(`resolve-loading-${feedbackId}`);
+                if (loading) loading.innerHTML = '<span style="color:#ef4444;">Erro ao gerar mensagem. Escreva manualmente abaixo.</span>';
+                const textarea = document.getElementById(`resolve-msg-${feedbackId}`);
+                const actions = document.getElementById(`resolve-actions-${feedbackId}`);
+                if (textarea) textarea.classList.remove('hidden');
+                if (actions) actions.classList.remove('hidden');
+            }
+        }
+
+        async function resolverComNotificacao(feedbackId) {
+            const textarea = document.getElementById(`resolve-msg-${feedbackId}`);
+            const message = (textarea?.value || '').trim();
+            if (!message) { alert('Escreva a mensagem de resolução antes de enviar.'); return; }
+
+            const btns = document.querySelectorAll(`#resolve-panel-${feedbackId} .resolve-btn`);
+            btns.forEach(b => b.disabled = true);
+
+            try {
+                const res = await fetch(`/api/feedback/${feedbackId}/resolve`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message, notify: true })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    closeThreadModal();
+                    aplicarFiltros();
+                } else {
+                    alert('Erro: ' + (data.error || 'desconhecido'));
+                    btns.forEach(b => b.disabled = false);
+                }
+            } catch (err) {
+                console.error('Erro ao resolver:', err);
+                alert('Erro de conexão');
+                btns.forEach(b => b.disabled = false);
+            }
+        }
+
+        async function resolverSemNotificar(feedbackId) {
+            const btns = document.querySelectorAll(`#resolve-panel-${feedbackId} .resolve-btn`);
+            btns.forEach(b => b.disabled = true);
+
+            try {
+                const res = await fetch(`/api/feedback/${feedbackId}/resolve`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: '', notify: false })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    closeThreadModal();
+                    aplicarFiltros();
+                } else {
+                    alert('Erro: ' + (data.error || 'desconhecido'));
+                    btns.forEach(b => b.disabled = false);
+                }
+            } catch (err) {
+                console.error('Erro ao resolver:', err);
+                btns.forEach(b => b.disabled = false);
+            }
         }
 
         function aplicarFiltros() {
