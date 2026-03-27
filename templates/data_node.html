@@ -760,6 +760,11 @@
             gap: 20px;
         }
 
+        #categories-grid {
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 24px;
+        }
+
         .manage-card {
             background: var(--bg-card);
             padding: 20px;
@@ -861,14 +866,26 @@
             gap: 3px;
         }
 
+        .category-card .manage-card-inner {
+            padding-top: 6px;
+        }
+
+        .category-card h2 {
+            font-size: 2.8rem;
+            margin: 4px 0 2px;
+        }
+
+        .category-card h3 {
+            font-size: 1.05rem;
+        }
+
         .cat-resolucao-badge {
-            font-size: 0.7rem;
+            font-size: 0.72rem;
             font-weight: 700;
-            padding: 2px 8px;
+            padding: 3px 10px;
             border-radius: 4px;
-            position: absolute;
-            top: 16px;
-            right: 16px;
+            display: inline-block;
+            margin-top: 10px;
         }
 
         /* Modal de detalhes da categoria */
@@ -3656,21 +3673,23 @@
                 const pctResolvido = Math.round((resolvidos / barTotal) * 100);
 
                 cGrid.innerHTML += `
-                    <div class="manage-card category-card ${saudeClass}" style="border-left: 4px solid ${c.color}" onclick="openCategoryDetail('${c.name.replace(/'/g, "\\'")}')">
-                        <span class="cat-resolucao-badge" style="background:${taxaColor}20;color:${taxaColor};border:1px solid ${taxaColor}55;">${taxa}% resolvido</span>
-                        <h3>${c.name} <i class="ri-price-tag-3-fill" style="color:${c.color}"></i></h3>
-                        <h2>${total}</h2>
-                        <p>Feedbacks recebidos</p>
-                        <div class="cat-mini-bars">
+                    <div class="manage-card category-card ${saudeClass}" style="border-left: 4px solid ${c.color}; padding:24px;" onclick="openCategoryDetail('${c.name.replace(/'/g, "\\'")}')">
+                        <h3 style="margin-bottom:8px;">${c.name} <i class="ri-price-tag-3-fill" style="color:${c.color}"></i></h3>
+                        <h2 style="font-size:2.8rem;margin:4px 0;">${total}</h2>
+                        <p style="margin-bottom:12px;">Feedbacks recebidos</p>
+                        <div class="cat-mini-bars" style="margin-bottom:8px;">
                             <div class="cat-mini-bar" style="background:#ef4444;width:${pctAberto}%;"></div>
                             <div class="cat-mini-bar" style="background:#f59e0b;width:${pctAndamento}%;"></div>
                             <div class="cat-mini-bar" style="background:#10b981;width:${pctResolvido}%;"></div>
-                            <span style="margin-left:6px;color:var(--text-muted);">${abertos} abertos / ${resolvidos} resolvidos</span>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                            <span style="font-size:0.78rem;color:var(--text-muted);">${abertos} abertos / ${resolvidos} resolvidos</span>
+                            <span class="cat-resolucao-badge" style="background:${taxaColor}20;color:${taxaColor};border:1px solid ${taxaColor}55;">${taxa}%</span>
                         </div>
                         <div class="cat-stats-row">
-                            ${sent.critico ? `<span style="color:#ef4444;"><i class="ri-alarm-warning-fill"></i> ${sent.critico}</span>` : ''}
-                            ${sent.urgente ? `<span style="color:#f59e0b;"><i class="ri-error-warning-fill"></i> ${sent.urgente}</span>` : ''}
-                            ${sent.positivo ? `<span style="color:#10b981;"><i class="ri-heart-fill"></i> ${sent.positivo}</span>` : ''}
+                            ${sent.critico ? `<span style="color:#ef4444;"><i class="ri-alarm-warning-fill"></i> ${sent.critico} críticos</span>` : ''}
+                            ${sent.urgente ? `<span style="color:#f59e0b;"><i class="ri-error-warning-fill"></i> ${sent.urgente} urgentes</span>` : ''}
+                            ${sent.positivo ? `<span style="color:#10b981;"><i class="ri-heart-fill"></i> ${sent.positivo} elogios</span>` : ''}
                         </div>
                         <div class="btn-delete" onclick="event.stopPropagation(); delItem('categories', '${c.name}')">Excluir</div>
                     </div>
