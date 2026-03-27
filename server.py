@@ -2789,10 +2789,16 @@ def webhook():
 
             # --- HANDOFF EARLY CHECK: se operador assumiu, toda mensagem vai pro thread ---
             if text and remote_jid:
-                _handoff_fb = get_active_feedback(remote_jid)
+                print(f"[HANDOFF-CHECK] Verificando handoff para {mascarar_telefone(remote_jid)}...")
+                try:
+                    _handoff_fb = get_active_feedback(remote_jid)
+                    print(f"[HANDOFF-CHECK] Resultado: fb={_handoff_fb.get('id') if _handoff_fb else None}, operator={_handoff_fb.get('handoff_operator') if _handoff_fb else None}")
+                except Exception as _hf_err:
+                    print(f"[HANDOFF-CHECK] ERRO ao buscar: {_hf_err}")
+                    _handoff_fb = None
                 if _handoff_fb and _handoff_fb.get('handoff_operator'):
                     _op_name = _handoff_fb['handoff_operator']
-                    print(f"[HANDOFF] Feedback {_handoff_fb['id']} controlado por {_op_name} — registrando mensagem do cidadão")
+                    print(f"[HANDOFF] Feedback {_handoff_fb['id']} controlado por {_op_name} — registrando mensagem do cidadão: '{text[:50]}'")
                     _cur_msg = _handoff_fb.get('message', '')
                     _upd_msg = append_conversation_entry(_cur_msg, 'client', text)
                     update_feedback(_handoff_fb['id'], {
