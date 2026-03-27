@@ -2548,7 +2548,7 @@
                         const firstMsg = previewMsg2?.text || e.message || '';
                         // Indicador de nova mensagem não respondida
                         const lastEntry2 = conversation[conversation.length - 1];
-                        const hasNewMsg2 = lastEntry2 && lastEntry2.role !== 'agent' && conversation.length > 1;
+                        const hasNewMsg2 = lastEntry2 && lastEntry2.role === 'client' && conversation.length > 1;
                         const newMsgBadge2 = hasNewMsg2
                             ? `<span style="display:inline-flex;align-items:center;gap:3px;background:#ef444420;color:#ef4444;border:1px solid #ef444455;font-size:0.62rem;font-weight:700;padding:2px 7px;border-radius:4px;animation:pulse 1.5s infinite;" title="Nova mensagem do cidadão"><i class="ri-message-3-line"></i> NOVA</span>`
                             : '';
