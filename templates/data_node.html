@@ -1806,6 +1806,9 @@
                 <option value="Positivo">Positivo</option>
                 <option value="Neutro">Neutro</option>
             </select>
+            <select id="filtro-bairro" class="filter-select" onchange="aplicarFiltros()">
+                <option value="">Todos Bairros</option>
+            </select>
             <select id="filtro-status" class="filter-select" onchange="aplicarFiltros()">
                 <option value="ativos" selected>Cards Ativos</option>
                 <option value="aberto">Aberto</option>
@@ -3059,11 +3062,13 @@
         function aplicarFiltros() {
             const categoria = document.getElementById('filtro-categoria').value;
             const prioridade = document.getElementById('filtro-prioridade').value;
+            const bairro = document.getElementById('filtro-bairro').value;
             const status = document.getElementById('filtro-status').value;
 
             let params = [];
             if (categoria) params.push(`categoria=${encodeURIComponent(categoria)}`);
             if (prioridade) params.push(`prioridade=${encodeURIComponent(prioridade)}`);
+            if (bairro) params.push(`regiao=${encodeURIComponent(bairro)}`);
             if (status && status !== 'ativos') params.push(`status=${encodeURIComponent(status)}`);
 
             const url = '/api/events' + (params.length ? '?' + params.join('&') : '');
@@ -3073,9 +3078,18 @@
         function limparFiltros() {
             document.getElementById('filtro-categoria').value = '';
             document.getElementById('filtro-prioridade').value = '';
+            document.getElementById('filtro-bairro').value = '';
             document.getElementById('filtro-status').value = 'ativos';
             document.getElementById('busca-protocolo').value = '';
             aplicarFiltros();
+        }
+
+        // Filtra por bairro específico (chamado do modal de regiões)
+        function filtrarPorBairro(bairroName) {
+            document.getElementById('filtro-bairro').value = bairroName;
+            aplicarFiltros();
+            // Scroll para a seção de feedbacks
+            document.getElementById('feed-list-container')?.scrollIntoView({ behavior: 'smooth' });
         }
 
         async function popularFiltrosCategorias() {
@@ -3089,6 +3103,21 @@
             config.categories.forEach(cat => {
                 select.innerHTML += `<option value="${cat.name}">${cat.name}</option>`;
             });
+
+            // Popular bairros a partir dos feedbacks existentes + regiões da config
+            const selectBairro = document.getElementById('filtro-bairro');
+            if (selectBairro) {
+                const bairrosFromConfig = (config.regions || []).map(r => r.name).filter(n => n && n !== 'N/A');
+                // Também busca bairros dos feedbacks para pegar regiões que estão em uso
+                const bairrosFromFeedbacks = _allEventsCache
+                    .map(e => e.region)
+                    .filter(r => r && r !== 'N/A');
+                const allBairros = [...new Set([...bairrosFromConfig, ...bairrosFromFeedbacks])].sort();
+                selectBairro.innerHTML = '<option value="">Todos Bairros</option>';
+                allBairros.forEach(b => {
+                    selectBairro.innerHTML += `<option value="${b}">${b}</option>`;
+                });
+            }
         }
 
         function toggleExportMenu(section) {
