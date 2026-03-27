@@ -618,7 +618,7 @@ def get_feedbacks():
     return load_json(EVENTS_FILE, [])
 
 CONVERSATION_MARKER_RE = re.compile(
-    r"\[\[(CLIENT|AGENT)\|([^\]]+)\]\]\n([\s\S]*?)(?=\n\n\[\[(?:CLIENT|AGENT)\||\Z)"
+    r"\[\[(CLIENT|AGENT|OPERATOR)\|([^\]]+)\]\]\n([\s\S]*?)(?=\n\n\[\[(?:CLIENT|AGENT|OPERATOR)\||\Z)"
 )
 LEGACY_UPDATE_SPLIT_RE = re.compile(
     r"\n\n\[Atualiza(?:Ã§Ã£o|cao)(?:\s+\d{2}:\d{2})?\]:\s*",
@@ -628,7 +628,13 @@ LEGACY_UPDATE_SPLIT_RE = re.compile(
 def serialize_conversation(entries):
     blocks = []
     for entry in entries:
-        role = 'AGENT' if entry.get('role') == 'agent' else 'CLIENT'
+        role_raw = entry.get('role', 'client')
+        if role_raw == 'operator':
+            role = 'OPERATOR'
+        elif role_raw == 'agent':
+            role = 'AGENT'
+        else:
+            role = 'CLIENT'
         timestamp = entry.get('timestamp') or datetime.utcnow().isoformat()
         text = (entry.get('text') or '').strip()
         if not text:
@@ -646,8 +652,14 @@ def parse_feedback_conversation(raw_message):
         entries = []
         for match in matches:
             role, timestamp, text = match.groups()
+            if role == "OPERATOR":
+                parsed_role = "operator"
+            elif role == "AGENT":
+                parsed_role = "agent"
+            else:
+                parsed_role = "client"
             entries.append({
-                "role": "agent" if role == "AGENT" else "client",
+                "role": parsed_role,
                 "timestamp": timestamp or None,
                 "text": (text or '').strip()
             })
@@ -2892,6 +2904,19 @@ def webhook():
                 active_feedback = get_active_feedback(remote_jid)
                 linked_from_id = None
 
+                # --- HANDOFF: se operador humano assumiu, não responde com IA ---
+                if active_feedback and active_feedback.get('handoff_operator'):
+                    operator_name = active_feedback['handoff_operator']
+                    print(f"[HANDOFF] Feedback {active_feedback['id']} controlado por {operator_name} — Clara silenciada")
+                    # Apenas registra a mensagem na conversa, sem resposta automática
+                    current_message = active_feedback.get('message', '')
+                    updated_message = append_conversation_entry(current_message, 'client', text)
+                    update_feedback(active_feedback['id'], {
+                        'message': updated_message,
+                        'updated_at': datetime.utcnow().isoformat()
+                    })
+                    return jsonify({"status": "handoff_active", "operator": operator_name}), 200
+
                 # Fluxo especial: Clara pediu rua/bairro e o cidadao respondeu.
                 # Nessa etapa nunca deve abrir card novo.
                 if active_feedback:
@@ -3217,6 +3242,136 @@ def update_feedback_status(feedback_id):
         return jsonify({"success": True, "status": new_status})
     else:
         return jsonify({"error": "Feedback não encontrado"}), 404
+
+@app.route("/api/feedback/<int:feedback_id>/handoff", methods=["POST"])
+@login_obrigatorio
+def handoff_feedback(feedback_id):
+    """Operador assume o atendimento de um feedback (handoff humano)."""
+    operator_name = session.get('usuario', 'Atendente')
+
+    # Busca feedback atual
+    sb = get_supabase()
+    feedback = None
+    if sb:
+        try:
+            resp = sb.table('feedbacks').select('*').eq('id', feedback_id).limit(1).execute()
+            if resp.data:
+                feedback = resp.data[0]
+        except Exception as e:
+            print(f"Erro ao buscar feedback para handoff: {e}")
+
+    if not feedback:
+        return jsonify({"error": "Feedback não encontrado"}), 404
+
+    # Atualiza feedback com operador e muda status para em_andamento
+    updates = {
+        'handoff_operator': operator_name,
+        'status': 'em_andamento',
+        'updated_at': datetime.utcnow().isoformat()
+    }
+
+    # Adiciona entrada na conversa
+    current_message = feedback.get('message', '')
+    system_note = f"📋 Atendimento assumido por {operator_name}"
+    updated_message = append_conversation_entry(current_message, 'operator', system_note)
+    updates['message'] = updated_message
+
+    if update_feedback(feedback_id, updates):
+        # Envia mensagem ao cidadão no WhatsApp
+        remote_jid = feedback.get('sender', '')
+        if remote_jid:
+            whatsapp_msg = (
+                f"Olá! Seu atendimento foi assumido por *{operator_name}* da Prefeitura de Ivaté. "
+                f"A partir de agora você está conversando diretamente com um atendente humano. 🙋‍♂️"
+            )
+            send_whatsapp_message(remote_jid, whatsapp_msg)
+
+        return jsonify({"success": True, "operator": operator_name})
+    else:
+        return jsonify({"error": "Erro ao atualizar feedback"}), 500
+
+
+@app.route("/api/feedback/<int:feedback_id>/reply", methods=["POST"])
+@login_obrigatorio
+def reply_feedback(feedback_id):
+    """Operador envia mensagem ao cidadão via dashboard."""
+    data = request.json
+    reply_text = (data.get('message') or '').strip()
+
+    if not reply_text:
+        return jsonify({"error": "Mensagem vazia"}), 400
+    if len(reply_text) > 600:
+        return jsonify({"error": "Mensagem muito longa (máx 600 caracteres)"}), 400
+
+    operator_name = session.get('usuario', 'Atendente')
+
+    # Busca feedback atual
+    sb = get_supabase()
+    feedback = None
+    if sb:
+        try:
+            resp = sb.table('feedbacks').select('*').eq('id', feedback_id).limit(1).execute()
+            if resp.data:
+                feedback = resp.data[0]
+        except Exception as e:
+            print(f"Erro ao buscar feedback para reply: {e}")
+
+    if not feedback:
+        return jsonify({"error": "Feedback não encontrado"}), 404
+
+    # Adiciona à conversa como operador
+    current_message = feedback.get('message', '')
+    updated_message = append_conversation_entry(current_message, 'operator', reply_text)
+    update_feedback(feedback_id, {
+        'message': updated_message,
+        'updated_at': datetime.utcnow().isoformat()
+    })
+
+    # Envia no WhatsApp
+    remote_jid = feedback.get('sender', '')
+    if remote_jid:
+        whatsapp_msg = f"*{operator_name}:*\n{reply_text}"
+        send_whatsapp_message(remote_jid, whatsapp_msg)
+
+    return jsonify({"success": True, "operator": operator_name})
+
+
+@app.route("/api/feedback/<int:feedback_id>/handoff/release", methods=["POST"])
+@login_obrigatorio
+def release_handoff(feedback_id):
+    """Operador devolve o atendimento para a Clara (IA)."""
+    operator_name = session.get('usuario', 'Atendente')
+
+    sb = get_supabase()
+    feedback = None
+    if sb:
+        try:
+            resp = sb.table('feedbacks').select('*').eq('id', feedback_id).limit(1).execute()
+            if resp.data:
+                feedback = resp.data[0]
+        except Exception as e:
+            print(f"Erro ao buscar feedback para release: {e}")
+
+    if not feedback:
+        return jsonify({"error": "Feedback não encontrado"}), 404
+
+    current_message = feedback.get('message', '')
+    system_note = f"📋 {operator_name} devolveu o atendimento para a Clara (IA)"
+    updated_message = append_conversation_entry(current_message, 'operator', system_note)
+
+    updates = {
+        'handoff_operator': None,
+        'message': updated_message,
+        'updated_at': datetime.utcnow().isoformat()
+    }
+
+    if update_feedback(feedback_id, updates):
+        remote_jid = feedback.get('sender', '')
+        if remote_jid:
+            send_whatsapp_message(remote_jid, "Seu atendimento foi devolvido para a *Clara*, nossa assistente virtual. Pode continuar enviando suas mensagens normalmente!")
+        return jsonify({"success": True})
+    return jsonify({"error": "Erro ao atualizar"}), 500
+
 
 @app.route("/api/debug")
 def debug_env():

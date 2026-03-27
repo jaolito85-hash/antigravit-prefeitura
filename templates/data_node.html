@@ -483,6 +483,129 @@
             color: #6ee7b7;
         }
 
+        .thread-item.operator {
+            justify-content: flex-end;
+        }
+
+        .thread-item.operator .chat-bubble {
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.22), rgba(67, 56, 202, 0.3));
+            border-color: rgba(129, 140, 248, 0.3);
+            border-bottom-right-radius: 6px;
+        }
+
+        .thread-item.operator .chat-role {
+            color: #a5b4fc;
+        }
+
+        .handoff-banner {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 14px;
+            margin-bottom: 12px;
+            border-radius: 8px;
+            font-size: 0.82rem;
+            font-weight: 600;
+        }
+
+        .handoff-banner.active {
+            background: rgba(99, 102, 241, 0.12);
+            border: 1px solid rgba(129, 140, 248, 0.3);
+            color: #a5b4fc;
+        }
+
+        .handoff-banner.inactive {
+            background: rgba(5, 150, 105, 0.08);
+            border: 1px solid rgba(52, 211, 153, 0.2);
+            color: #6ee7b7;
+        }
+
+        .handoff-btn {
+            padding: 8px 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.82rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s;
+        }
+
+        .handoff-btn.assume {
+            background: rgba(99, 102, 241, 0.15);
+            color: #a5b4fc;
+            border: 1px solid rgba(129, 140, 248, 0.4);
+        }
+
+        .handoff-btn.assume:hover {
+            background: rgba(99, 102, 241, 0.3);
+        }
+
+        .handoff-btn.release {
+            background: rgba(5, 150, 105, 0.12);
+            color: #6ee7b7;
+            border: 1px solid rgba(52, 211, 153, 0.3);
+        }
+
+        .handoff-btn.release:hover {
+            background: rgba(5, 150, 105, 0.25);
+        }
+
+        .reply-box {
+            display: flex;
+            gap: 8px;
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid var(--border);
+        }
+
+        .reply-input {
+            flex: 1;
+            background: #111827;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 10px 14px;
+            color: #d1d5db;
+            font-size: 0.88rem;
+            resize: none;
+            outline: none;
+            min-height: 42px;
+            max-height: 100px;
+        }
+
+        .reply-input:focus {
+            border-color: rgba(129, 140, 248, 0.5);
+        }
+
+        .reply-input::placeholder {
+            color: #6b7280;
+        }
+
+        .reply-send-btn {
+            background: linear-gradient(135deg, #6366f1, #4338ca);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            padding: 10px 16px;
+            cursor: pointer;
+            font-size: 0.88rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: opacity 0.2s;
+        }
+
+        .reply-send-btn:hover {
+            opacity: 0.85;
+        }
+
+        .reply-send-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
         .chat-time {
             font-size: 0.72rem;
             color: var(--text-muted);
@@ -2471,10 +2594,19 @@
             const conversation = parseConversationEntries(e);
             const timelineHtml = conversation.map(item => {
                 const isAgent = item.role === 'agent';
-                const roleLabel = isAgent ? 'Clara' : 'Cidadão';
+                const isOperator = item.role === 'operator';
+                let roleLabel = 'Cidadão';
+                let roleClass = 'client';
+                if (isOperator) {
+                    roleLabel = 'Atendente';
+                    roleClass = 'operator';
+                } else if (isAgent) {
+                    roleLabel = 'Clara';
+                    roleClass = 'agent';
+                }
                 const timeLabel = item.timestamp ? formatarHoraMensagem(item.timestamp) : '';
                 return `
-                    <div class="thread-item ${isAgent ? 'agent' : 'client'}">
+                    <div class="thread-item ${roleClass}">
                         <div class="chat-bubble">
                             <div class="chat-meta">
                                 <span class="chat-role">${roleLabel}</span>
@@ -2485,6 +2617,23 @@
                     </div>
                 `;
             }).join('');
+
+            const isHandoff = !!e.handoff_operator;
+            const isResolved = status === 'resolvido';
+            const handoffHtml = isResolved ? '' : (isHandoff
+                ? `<div class="handoff-banner active"><i class="ri-user-voice-fill"></i> Atendimento assumido por <strong>${e.handoff_operator}</strong>
+                     <button onclick="releaseHandoff(${e.id})" class="handoff-btn release" style="margin-left:auto;"><i class="ri-robot-2-line"></i> Devolver p/ Clara</button>
+                   </div>`
+                : `<div style="text-align:center; margin-bottom:12px;">
+                     <button onclick="assumirAtendimento(${e.id})" class="handoff-btn assume"><i class="ri-user-voice-fill"></i> Assumir Atendimento</button>
+                   </div>`
+            );
+
+            const replyBoxHtml = (isHandoff && !isResolved) ? `
+                <div class="reply-box" id="reply-box-${e.id}">
+                    <textarea class="reply-input" id="reply-input-${e.id}" placeholder="Digite sua mensagem para o cidadão..." maxlength="600" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();enviarResposta(${e.id});}"></textarea>
+                    <button class="reply-send-btn" onclick="enviarResposta(${e.id})"><i class="ri-send-plane-2-fill"></i> Enviar</button>
+                </div>` : '';
 
             const status = e.status || 'aberto';
             const sc = { 'aberto': { color: '#EF4444', label: 'Aberto', icon: 'ri-error-warning-line' }, 'em_andamento': { color: '#F59E0B', label: 'Em Andamento', icon: 'ri-loader-4-line' }, 'resolvido': { color: '#10B981', label: 'Resolvido', icon: 'ri-checkbox-circle-line' } }[status] || { color: '#EF4444', label: 'Aberto', icon: 'ri-error-warning-line' };
@@ -2530,7 +2679,9 @@
                     <button onclick="closeThreadModal()" style="background:transparent;border:none;color:var(--text-muted);font-size:1.4rem;cursor:pointer;line-height:1;">×</button>
                 </div>
                 ${midiaModal}
-                <div class="thread-timeline">${timelineHtml}</div>
+                ${handoffHtml}
+                <div class="thread-timeline" id="thread-timeline-${e.id}">${timelineHtml}</div>
+                ${replyBoxHtml}
                 <div class="thread-footer">
                     ${statusHtmlModal}
                     <div style="font-size:0.78rem; color:var(--text-muted); display:flex; flex-direction:column; align-items:flex-end; gap:2px;">
@@ -2544,6 +2695,93 @@
 
         function closeThreadModal() {
             document.getElementById('thread-modal-overlay').classList.add('hidden');
+        }
+
+        // --- HANDOFF FUNCTIONS ---
+        async function assumirAtendimento(feedbackId) {
+            try {
+                const res = await fetch(`/api/feedback/${feedbackId}/handoff`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const data = await res.json();
+                if (data.success) {
+                    // Refresh feedbacks and reopen modal
+                    await reloadAndReopenModal(feedbackId);
+                } else {
+                    alert('Erro ao assumir atendimento: ' + (data.error || 'desconhecido'));
+                }
+            } catch (err) {
+                console.error('Erro handoff:', err);
+                alert('Erro de conexão ao assumir atendimento');
+            }
+        }
+
+        async function releaseHandoff(feedbackId) {
+            try {
+                const res = await fetch(`/api/feedback/${feedbackId}/handoff/release`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const data = await res.json();
+                if (data.success) {
+                    await reloadAndReopenModal(feedbackId);
+                } else {
+                    alert('Erro ao devolver atendimento: ' + (data.error || 'desconhecido'));
+                }
+            } catch (err) {
+                console.error('Erro release handoff:', err);
+            }
+        }
+
+        async function enviarResposta(feedbackId) {
+            const input = document.getElementById(`reply-input-${feedbackId}`);
+            const text = (input?.value || '').trim();
+            if (!text) return;
+
+            const btn = input.parentElement.querySelector('.reply-send-btn');
+            btn.disabled = true;
+            btn.innerHTML = '<i class="ri-loader-4-line"></i> Enviando...';
+
+            try {
+                const res = await fetch(`/api/feedback/${feedbackId}/reply`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: text })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    input.value = '';
+                    // Refresh to show the new message in timeline
+                    await reloadAndReopenModal(feedbackId);
+                } else {
+                    alert('Erro ao enviar: ' + (data.error || 'desconhecido'));
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="ri-send-plane-2-fill"></i> Enviar';
+                }
+            } catch (err) {
+                console.error('Erro ao enviar resposta:', err);
+                alert('Erro de conexão');
+                btn.disabled = false;
+                btn.innerHTML = '<i class="ri-send-plane-2-fill"></i> Enviar';
+            }
+        }
+
+        async function reloadAndReopenModal(feedbackId) {
+            // Reload feedbacks via existing filter flow, then reopen modal
+            const categoria = document.getElementById('filtro-categoria')?.value || '';
+            const prioridade = document.getElementById('filtro-prioridade')?.value || '';
+            const statusFilter = document.getElementById('filtro-status')?.value || 'ativos';
+
+            let params = [];
+            if (categoria) params.push(`categoria=${encodeURIComponent(categoria)}`);
+            if (prioridade) params.push(`prioridade=${encodeURIComponent(prioridade)}`);
+            if (statusFilter && statusFilter !== 'ativos') params.push(`status=${encodeURIComponent(statusFilter)}`);
+            const url = '/api/events' + (params.length ? '?' + params.join('&') : '');
+
+            await loadFeedbacks(url);
+            // Reopen the modal with updated data
+            openThreadModal(feedbackId);
         }
 
         function aplicarFiltros() {
