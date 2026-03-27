@@ -2720,10 +2720,12 @@ def append_to_feedback(feedback_id, old_message, new_content, new_region=None, n
 @app.route("/webhook", methods=["POST"])
 @app.route("/webhook/<path:event_type>", methods=["POST"])
 def webhook(event_type=None):
+    print(f"[WEBHOOK] Requisicao recebida! Path: /webhook/{event_type or ''} IP: {request.remote_addr}")
     # Validação de origem do webhook
     if WEBHOOK_SECRET:
         incoming_secret = request.headers.get("X-Webhook-Secret", "")
         if incoming_secret != WEBHOOK_SECRET:
+            print(f"[WEBHOOK] REJEITADO: secret invalido")
             return jsonify({"error": "unauthorized"}), 401
 
     try:
@@ -3403,11 +3405,55 @@ def debug_env():
         }
     })
 
+@app.route("/api/debug/webhook-check")
+def debug_webhook_check():
+    """Verifica configuração do webhook na Evolution API."""
+    admin_key = os.getenv("ADMIN_KEY", "")
+    provided_key = request.headers.get("X-Admin-Key") or request.args.get("key")
+    if not admin_key or provided_key != admin_key:
+        return jsonify({"error": "unauthorized"}), 401
+
+    evo_url = os.getenv("EVOLUTION_API_URL", "")
+    evo_key = os.getenv("EVOLUTION_API_KEY", "")
+    evo_instance = os.getenv("EVOLUTION_INSTANCE_NAME", "")
+
+    result = {
+        "server_webhook_route": "/webhook and /webhook/<event>",
+        "webhook_secret_configured": bool(os.getenv("WEBHOOK_SECRET", "")),
+        "evolution_url": evo_url[:30] + "..." if len(evo_url) > 30 else evo_url,
+        "evolution_instance": evo_instance,
+    }
+
+    # Consulta a Evolution API para ver o webhook configurado
+    if evo_url and evo_key and evo_instance:
+        try:
+            resp = requests.get(
+                f"{evo_url}/webhook/find/{evo_instance}",
+                headers={"apikey": evo_key},
+                timeout=10
+            )
+            result["evolution_webhook_status"] = resp.status_code
+            if resp.status_code == 200:
+                result["evolution_webhook_config"] = resp.json()
+            else:
+                result["evolution_webhook_response"] = resp.text[:200]
+        except Exception as e:
+            result["evolution_webhook_error"] = str(e)
+
+    return jsonify(result)
+
+
+@app.route("/webhook-test", methods=["GET", "POST"])
+def webhook_test():
+    """Endpoint simples para testar se o servidor recebe requisições."""
+    return jsonify({"status": "ok", "message": "Webhook endpoint is reachable", "method": request.method})
+
+
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5002))
-    print(f"🏛️ Prefeitura Node Data running on port {port}")
+    print(f"Prefeitura Node Data running on port {port}")
     if supabase:
-        print("📦 Using Supabase database")
+        print("Using Supabase database")
     else:
-        print("📁 Using local JSON files")
+        print("Using local JSON files")
     app.run(host="0.0.0.0", port=port)
