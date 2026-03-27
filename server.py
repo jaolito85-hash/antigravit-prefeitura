@@ -2585,6 +2585,89 @@ def get_config_route():
     
     return jsonify(config)
 
+
+@app.route("/api/categories/detail")
+@login_obrigatorio
+def categories_detail():
+    """Retorna detalhes de cada categoria para o dashboard de gestores."""
+    feedbacks = get_feedbacks()
+
+    # Agrupa por categoria
+    cat_map = {}
+    for fb in feedbacks:
+        cat = fb.get('category', 'Geral')
+        if cat not in cat_map:
+            cat_map[cat] = []
+        cat_map[cat].append(fb)
+
+    result = {}
+    for cat_name, fbs in cat_map.items():
+        total = len(fbs)
+        abertos = sum(1 for f in fbs if f.get('status', 'aberto') == 'aberto')
+        em_andamento = sum(1 for f in fbs if f.get('status') == 'em_andamento')
+        resolvidos = sum(1 for f in fbs if f.get('status') == 'resolvido')
+        criticos = sum(1 for f in fbs if f.get('urgency') in ['Critico', 'Crítico'])
+        urgentes = sum(1 for f in fbs if f.get('urgency') == 'Urgente')
+        positivos = sum(1 for f in fbs if f.get('urgency') == 'Positivo')
+        neutros = sum(1 for f in fbs if f.get('urgency') == 'Neutro')
+        taxa_resolucao = round((resolvidos / total) * 100) if total > 0 else 0
+
+        # Distribuição por bairro
+        bairros = {}
+        for f in fbs:
+            reg = f.get('region', 'N/A')
+            if reg and reg != 'N/A':
+                bairros[reg] = bairros.get(reg, 0) + 1
+        # Ordena por quantidade desc
+        bairros_sorted = sorted(bairros.items(), key=lambda x: x[1], reverse=True)
+
+        # Últimas 5 demandas
+        fbs_sorted = sorted(fbs, key=lambda x: x.get('timestamp', ''), reverse=True)
+        ultimas = []
+        for f in fbs_sorted[:5]:
+            preview = get_feedback_preview(f.get('message', '')) or f.get('message', '')
+            ultimas.append({
+                'id': f.get('id'),
+                'preview': preview[:100],
+                'status': f.get('status', 'aberto'),
+                'urgency': f.get('urgency', 'Neutro'),
+                'region': f.get('region', 'N/A'),
+                'timestamp': f.get('timestamp'),
+                'protocol': f.get('protocol', ''),
+            })
+
+        # Saúde: green/yellow/red
+        pendentes = abertos + em_andamento
+        if total == 0:
+            saude = 'empty'
+        elif criticos > 0 and abertos > 0:
+            saude = 'red'
+        elif taxa_resolucao < 40 and pendentes > 2:
+            saude = 'red'
+        elif taxa_resolucao < 70 or urgentes > 0:
+            saude = 'yellow'
+        else:
+            saude = 'green'
+
+        result[cat_name] = {
+            'total': total,
+            'abertos': abertos,
+            'em_andamento': em_andamento,
+            'resolvidos': resolvidos,
+            'taxa_resolucao': taxa_resolucao,
+            'sentimento': {
+                'critico': criticos,
+                'urgente': urgentes,
+                'positivo': positivos,
+                'neutro': neutros,
+            },
+            'bairros': bairros_sorted,
+            'ultimas': ultimas,
+            'saude': saude,
+        }
+
+    return jsonify(result)
+
 @app.route("/api/insights")
 @login_obrigatorio
 def get_insights():

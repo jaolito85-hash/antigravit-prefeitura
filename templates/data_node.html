@@ -815,6 +815,126 @@
             right: 20px;
         }
 
+        .category-card {
+            cursor: pointer;
+            overflow: hidden;
+            transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
+        }
+
+        .category-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 16px 34px rgba(0, 0, 0, 0.2);
+        }
+
+        .category-card.saude-green { border-color: rgba(16, 185, 129, 0.4); }
+        .category-card.saude-green:hover { border-color: rgba(16, 185, 129, 0.7); box-shadow: 0 12px 30px rgba(16, 185, 129, 0.1); }
+        .category-card.saude-yellow { border-color: rgba(245, 158, 11, 0.4); }
+        .category-card.saude-yellow:hover { border-color: rgba(245, 158, 11, 0.7); box-shadow: 0 12px 30px rgba(245, 158, 11, 0.1); }
+        .category-card.saude-red { border-color: rgba(239, 68, 68, 0.4); }
+        .category-card.saude-red:hover { border-color: rgba(239, 68, 68, 0.7); box-shadow: 0 12px 30px rgba(239, 68, 68, 0.1); }
+
+        .cat-mini-bars {
+            display: flex;
+            gap: 4px;
+            align-items: center;
+            margin-top: 10px;
+            font-size: 0.7rem;
+        }
+
+        .cat-mini-bar {
+            height: 6px;
+            border-radius: 3px;
+            min-width: 4px;
+        }
+
+        .cat-stats-row {
+            display: flex;
+            gap: 12px;
+            margin-top: 8px;
+            font-size: 0.72rem;
+            color: var(--text-muted);
+        }
+
+        .cat-stats-row span {
+            display: flex;
+            align-items: center;
+            gap: 3px;
+        }
+
+        .cat-resolucao-badge {
+            font-size: 0.7rem;
+            font-weight: 700;
+            padding: 2px 8px;
+            border-radius: 4px;
+            position: absolute;
+            top: 16px;
+            right: 16px;
+        }
+
+        /* Modal de detalhes da categoria */
+        .cat-detail-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin: 16px 0;
+        }
+
+        .cat-detail-kpi {
+            background: #111827;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 14px;
+            text-align: center;
+        }
+
+        .cat-detail-kpi .kpi-value {
+            font-size: 1.6rem;
+            font-weight: 800;
+            color: var(--text-main);
+        }
+
+        .cat-detail-kpi .kpi-label {
+            font-size: 0.72rem;
+            color: var(--text-muted);
+            margin-top: 2px;
+        }
+
+        .cat-bairro-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(75, 85, 99, 0.2);
+            font-size: 0.82rem;
+        }
+
+        .cat-bairro-bar {
+            height: 6px;
+            background: #059669;
+            border-radius: 3px;
+            margin: 0 12px;
+            flex: 1;
+        }
+
+        .cat-sentiment-bar {
+            display: flex;
+            height: 10px;
+            border-radius: 5px;
+            overflow: hidden;
+            margin: 8px 0 4px;
+        }
+
+        .cat-demanda-item {
+            padding: 10px 0;
+            border-bottom: 1px solid rgba(75, 85, 99, 0.2);
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+
+        .cat-demanda-item:hover {
+            background: rgba(255, 255, 255, 0.03);
+        }
+
         .btn-add {
             background: var(--accent-primary);
             color: white;
@@ -2938,6 +3058,132 @@
             openThreadModal(feedbackId);
         }
 
+        // --- MODAL DE DETALHE DA CATEGORIA ---
+        let _catDetailCache = null;
+
+        async function openCategoryDetail(catName) {
+            const modal = document.getElementById('category-modal-body');
+            modal.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted);"><i class="ri-loader-4-line" style="animation:spin 1s linear infinite;font-size:1.5rem;"></i> Carregando...</div>';
+            document.getElementById('category-modal-overlay').classList.remove('hidden');
+
+            try {
+                if (!_catDetailCache) {
+                    const res = await fetch('/api/categories/detail');
+                    _catDetailCache = await res.json();
+                }
+                const d = _catDetailCache[catName];
+                if (!d) { modal.innerHTML = '<p style="padding:20px;color:var(--text-muted);">Nenhum dado encontrado para esta categoria.</p>'; return; }
+
+                const taxa = d.taxa_resolucao;
+                const taxaColor = taxa >= 70 ? '#10b981' : taxa >= 40 ? '#f59e0b' : '#ef4444';
+                const saudeDot = d.saude === 'green' ? '#10b981' : d.saude === 'yellow' ? '#f59e0b' : d.saude === 'red' ? '#ef4444' : '#6b7280';
+                const saudeLabel = d.saude === 'green' ? 'Sob Controle' : d.saude === 'yellow' ? 'Atenção' : d.saude === 'red' ? 'Crítico' : 'Sem dados';
+
+                // Bairros
+                const bairrosHtml = (d.bairros || []).slice(0, 8).map(([name, count]) => {
+                    const maxCount = d.bairros[0]?.[1] || 1;
+                    const pct = Math.round((count / maxCount) * 100);
+                    return `<div class="cat-bairro-row">
+                        <span style="min-width:120px;color:var(--text-main);font-weight:500;">${name}</span>
+                        <div class="cat-bairro-bar" style="width:${pct}%;"></div>
+                        <span style="font-weight:700;color:var(--text-main);min-width:24px;text-align:right;">${count}</span>
+                    </div>`;
+                }).join('') || '<p style="color:var(--text-muted);font-size:0.82rem;">Sem bairros registrados</p>';
+
+                // Sentimento bar
+                const sent = d.sentimento || {};
+                const sentTotal = (sent.critico || 0) + (sent.urgente || 0) + (sent.positivo || 0) + (sent.neutro || 0) || 1;
+                const sentBar = `<div class="cat-sentiment-bar">
+                    ${sent.critico ? `<div style="background:#ef4444;width:${(sent.critico/sentTotal)*100}%;" title="Crítico: ${sent.critico}"></div>` : ''}
+                    ${sent.urgente ? `<div style="background:#f59e0b;width:${(sent.urgente/sentTotal)*100}%;" title="Urgente: ${sent.urgente}"></div>` : ''}
+                    ${sent.neutro ? `<div style="background:#3b82f6;width:${(sent.neutro/sentTotal)*100}%;" title="Neutro: ${sent.neutro}"></div>` : ''}
+                    ${sent.positivo ? `<div style="background:#10b981;width:${(sent.positivo/sentTotal)*100}%;" title="Positivo: ${sent.positivo}"></div>` : ''}
+                </div>
+                <div style="display:flex;gap:12px;font-size:0.7rem;color:var(--text-muted);flex-wrap:wrap;">
+                    ${sent.critico ? `<span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#ef4444;margin-right:3px;"></span>Crítico: ${sent.critico}</span>` : ''}
+                    ${sent.urgente ? `<span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#f59e0b;margin-right:3px;"></span>Urgente: ${sent.urgente}</span>` : ''}
+                    ${sent.neutro ? `<span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#3b82f6;margin-right:3px;"></span>Neutro: ${sent.neutro}</span>` : ''}
+                    ${sent.positivo ? `<span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#10b981;margin-right:3px;"></span>Positivo: ${sent.positivo}</span>` : ''}
+                </div>`;
+
+                // Últimas demandas
+                const demandasHtml = (d.ultimas || []).map(u => {
+                    const urgColor = (u.urgency || '').toLowerCase().includes('crit') ? '#ef4444' : u.urgency === 'Urgente' ? '#f59e0b' : u.urgency === 'Positivo' ? '#10b981' : '#3b82f6';
+                    const statusIcon = u.status === 'resolvido' ? '<i class="ri-checkbox-circle-fill" style="color:#10b981;"></i>' : u.status === 'em_andamento' ? '<i class="ri-loader-4-line" style="color:#f59e0b;"></i>' : '<i class="ri-error-warning-fill" style="color:#ef4444;"></i>';
+                    return `<div class="cat-demanda-item" onclick="closeCategoryModal(); nav('feedbacks', document.querySelector('[onclick*=feedbacks]')); setTimeout(()=>openThreadModal(${u.id}), 300);">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                            <span style="font-size:0.75rem;color:${urgColor};font-weight:600;">${statusIcon} ${u.urgency || 'Neutro'} ${u.protocol ? '#' + u.protocol : ''}</span>
+                            <span style="font-size:0.7rem;color:var(--text-muted);">${u.region && u.region !== 'N/A' ? u.region : ''} ${u.timestamp ? formatarTempo(u.timestamp) : ''}</span>
+                        </div>
+                        <div style="font-size:0.82rem;color:#d1d5db;line-height:1.4;">${formatMessage(u.preview)}</div>
+                    </div>`;
+                }).join('') || '<p style="color:var(--text-muted);font-size:0.82rem;">Nenhuma demanda registrada</p>';
+
+                modal.innerHTML = `
+                    <div class="thread-header">
+                        <div>
+                            <div style="font-size:1.1rem;font-weight:700;display:flex;align-items:center;gap:8px;">
+                                <i class="ri-price-tag-3-fill" style="color:#059669;"></i> ${catName}
+                            </div>
+                            <div style="margin-top:4px;display:flex;align-items:center;gap:8px;">
+                                <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${saudeDot};"></span>
+                                <span style="font-size:0.8rem;color:${saudeDot};font-weight:600;">${saudeLabel}</span>
+                            </div>
+                        </div>
+                        <button onclick="closeCategoryModal()" style="background:transparent;border:none;color:var(--text-muted);font-size:1.4rem;cursor:pointer;line-height:1;">x</button>
+                    </div>
+
+                    <div class="cat-detail-grid">
+                        <div class="cat-detail-kpi">
+                            <div class="kpi-value">${d.total}</div>
+                            <div class="kpi-label">Total de Demandas</div>
+                        </div>
+                        <div class="cat-detail-kpi">
+                            <div class="kpi-value" style="color:${taxaColor};">${taxa}%</div>
+                            <div class="kpi-label">Taxa de Resolução</div>
+                        </div>
+                        <div class="cat-detail-kpi">
+                            <div class="kpi-value" style="color:#ef4444;">${d.abertos}</div>
+                            <div class="kpi-label">Abertos</div>
+                        </div>
+                        <div class="cat-detail-kpi">
+                            <div class="kpi-value" style="color:#10b981;">${d.resolvidos}</div>
+                            <div class="kpi-label">Resolvidos</div>
+                        </div>
+                    </div>
+
+                    <div style="margin:16px 0;">
+                        <div style="font-size:0.88rem;font-weight:700;margin-bottom:8px;color:var(--text-main);"><i class="ri-emotion-line" style="color:#f59e0b;"></i> Sentimento</div>
+                        ${sentBar}
+                    </div>
+
+                    <div style="margin:16px 0;">
+                        <div style="font-size:0.88rem;font-weight:700;margin-bottom:8px;color:var(--text-main);"><i class="ri-map-pin-line" style="color:#059669;"></i> Bairros com mais demandas</div>
+                        ${bairrosHtml}
+                    </div>
+
+                    <div style="margin:16px 0;">
+                        <div style="font-size:0.88rem;font-weight:700;margin-bottom:8px;color:var(--text-main);"><i class="ri-chat-3-line" style="color:#3b82f6;"></i> Últimas demandas</div>
+                        ${demandasHtml}
+                    </div>
+
+                    <div style="text-align:center;margin-top:16px;padding-top:16px;border-top:1px solid var(--border);">
+                        <button onclick="closeCategoryModal(); document.getElementById('filtro-categoria').value='${catName.replace(/'/g, "\\'")}'; nav('feedbacks', document.querySelector('[onclick*=feedbacks]')); setTimeout(()=>aplicarFiltros(), 200);" style="background:linear-gradient(135deg,#059669,#047857);color:white;border:none;padding:10px 24px;border-radius:8px;cursor:pointer;font-size:0.88rem;font-weight:600;display:inline-flex;align-items:center;gap:6px;">
+                            <i class="ri-filter-line"></i> Ver todos os cards de ${catName}
+                        </button>
+                    </div>
+                `;
+            } catch (err) {
+                console.error('Erro ao abrir detalhe categoria:', err);
+                modal.innerHTML = '<p style="padding:20px;color:#ef4444;">Erro ao carregar detalhes.</p>';
+            }
+        }
+
+        function closeCategoryModal() {
+            document.getElementById('category-modal-overlay').classList.add('hidden');
+            _catDetailCache = null;
+        }
+
         // --- RESOLUÇÃO COM NOTIFICAÇÃO ---
         async function abrirPainelResolucao(feedbackId) {
             // Fecha o menu de status
@@ -3379,13 +3625,54 @@
 
             const cGrid = document.getElementById('categories-grid');
             cGrid.innerHTML = '';
+
+            // Carrega detalhes das categorias para enriquecer os cards
+            let catDetails = {};
+            try {
+                const detailRes = await fetch('/api/categories/detail');
+                catDetails = await detailRes.json();
+            } catch (err) {
+                console.error('Erro ao carregar detalhes categorias:', err);
+            }
+
             config.categories.forEach(c => {
+                const d = catDetails[c.name] || {};
+                const total = d.total || c.count || 0;
+                const abertos = d.abertos || 0;
+                const emAndamento = d.em_andamento || 0;
+                const resolvidos = d.resolvidos || 0;
+                const taxa = d.taxa_resolucao || 0;
+                const saude = d.saude || 'empty';
+                const sent = d.sentimento || {};
+
+                const saudeClass = `saude-${saude}`;
+                const saudeDot = saude === 'green' ? '#10b981' : saude === 'yellow' ? '#f59e0b' : saude === 'red' ? '#ef4444' : '#6b7280';
+                const taxaColor = taxa >= 70 ? '#10b981' : taxa >= 40 ? '#f59e0b' : '#ef4444';
+
+                // Mini barras proporcionais
+                const barTotal = Math.max(total, 1);
+                const pctAberto = Math.round((abertos / barTotal) * 100);
+                const pctAndamento = Math.round((emAndamento / barTotal) * 100);
+                const pctResolvido = Math.round((resolvidos / barTotal) * 100);
+
                 cGrid.innerHTML += `
-                    <div class="manage-card" style="border-left: 4px solid ${c.color}">
+                    <div class="manage-card category-card ${saudeClass}" style="border-left: 4px solid ${c.color}" onclick="openCategoryDetail('${c.name.replace(/'/g, "\\'")}')">
+                        <span class="cat-resolucao-badge" style="background:${taxaColor}20;color:${taxaColor};border:1px solid ${taxaColor}55;">${taxa}% resolvido</span>
                         <h3>${c.name} <i class="ri-price-tag-3-fill" style="color:${c.color}"></i></h3>
-                        <h2>${c.count}</h2>
+                        <h2>${total}</h2>
                         <p>Feedbacks recebidos</p>
-                        <div class="btn-delete" onclick="delItem('categories', '${c.name}')">Excluir</div>
+                        <div class="cat-mini-bars">
+                            <div class="cat-mini-bar" style="background:#ef4444;width:${pctAberto}%;"></div>
+                            <div class="cat-mini-bar" style="background:#f59e0b;width:${pctAndamento}%;"></div>
+                            <div class="cat-mini-bar" style="background:#10b981;width:${pctResolvido}%;"></div>
+                            <span style="margin-left:6px;color:var(--text-muted);">${abertos} abertos / ${resolvidos} resolvidos</span>
+                        </div>
+                        <div class="cat-stats-row">
+                            ${sent.critico ? `<span style="color:#ef4444;"><i class="ri-alarm-warning-fill"></i> ${sent.critico}</span>` : ''}
+                            ${sent.urgente ? `<span style="color:#f59e0b;"><i class="ri-error-warning-fill"></i> ${sent.urgente}</span>` : ''}
+                            ${sent.positivo ? `<span style="color:#10b981;"><i class="ri-heart-fill"></i> ${sent.positivo}</span>` : ''}
+                        </div>
+                        <div class="btn-delete" onclick="event.stopPropagation(); delItem('categories', '${c.name}')">Excluir</div>
                     </div>
                 `;
             });
@@ -3765,6 +4052,12 @@
     <div id="region-modal-overlay" class="modal-overlay hidden" onclick="if(event.target===this) closeRegionModal()">
         <div class="modal-thread-box" id="region-modal-body">
             <!-- Populated by openRegionModal() -->
+        </div>
+    </div>
+
+    <div id="category-modal-overlay" class="modal-overlay hidden" onclick="if(event.target===this) closeCategoryModal()">
+        <div class="modal-thread-box" id="category-modal-body" style="max-width:700px;">
+            <!-- Populated by openCategoryDetail() -->
         </div>
     </div>
 
