@@ -2618,6 +2618,8 @@
                 `;
             }).join('');
 
+            const status = e.status || 'aberto';
+
             const isHandoff = !!e.handoff_operator;
             const isResolved = status === 'resolvido';
             const handoffHtml = isResolved ? '' : (isHandoff
@@ -2634,8 +2636,6 @@
                     <textarea class="reply-input" id="reply-input-${e.id}" placeholder="Digite sua mensagem para o cidadão..." maxlength="600" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();enviarResposta(${e.id});}"></textarea>
                     <button class="reply-send-btn" onclick="enviarResposta(${e.id})"><i class="ri-send-plane-2-fill"></i> Enviar</button>
                 </div>` : '';
-
-            const status = e.status || 'aberto';
             const sc = { 'aberto': { color: '#EF4444', label: 'Aberto', icon: 'ri-error-warning-line' }, 'em_andamento': { color: '#F59E0B', label: 'Em Andamento', icon: 'ri-loader-4-line' }, 'resolvido': { color: '#10B981', label: 'Resolvido', icon: 'ri-checkbox-circle-line' } }[status] || { color: '#EF4444', label: 'Aberto', icon: 'ri-error-warning-line' };
             const showStatus = u.includes('urge') || u.includes('crit') || u.includes('crÃ­t');
             const statusHtmlModal = showStatus ? `
