@@ -3050,6 +3050,27 @@ def webhook(event_type=None):
                     new_category = (categoria or '').strip().lower()
                     same_category = old_category == new_category
 
+                    # Respostas curtas/conversacionais SEMPRE vão para o card existente
+                    # (são respostas às perguntas da Clara, não reclamações novas)
+                    _text_clean = text.strip().lower().rstrip('!?.,:;')
+                    _is_conversational = (
+                        len(_text_clean) <= 40
+                        and _text_clean in {
+                            'nao', 'não', 'sim', 'ok', 'certo', 'isso', 'isso mesmo',
+                            'ta', 'tá', 'ta bom', 'tá bom', 'beleza', 'blz',
+                            'pode ser', 'entendi', 'obrigado', 'obrigada', 'valeu',
+                            'brigado', 'brigada', 'agradeço', 'vlw', 'isso ai',
+                            'nao sei', 'não sei', 'nao lembro', 'não lembro',
+                            'nao tenho', 'não tenho', 'nenhum', 'nenhuma',
+                            'so isso', 'só isso', 'era isso', 'é isso',
+                            'perfeito', 'exato', 'correto', 'confirmado',
+                        }
+                        or len(text.strip().split()) <= 3  # Até 3 palavras: provavelmente resposta
+                    )
+                    if _is_conversational and not same_category:
+                        print(f"[THREADING] Conversational reply '{text[:30]}' — forcing append to existing card {active_feedback.get('id')}")
+                        same_category = True  # Força append ao card existente
+
                     if same_category:
                         # MESMA CATEGORIA → append ao card existente
                         print(f"[THREADING] Same category '{categoria}' — appending to feedback {active_feedback.get('id')}")
