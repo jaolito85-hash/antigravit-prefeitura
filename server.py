@@ -2723,9 +2723,10 @@ def webhook(event_type=None):
     print(f"[WEBHOOK] Requisicao recebida! Path: /webhook/{event_type or ''} IP: {request.remote_addr}")
     # Validação de origem do webhook
     if WEBHOOK_SECRET:
-        incoming_secret = request.headers.get("X-Webhook-Secret", "")
+        incoming_secret = request.headers.get("X-Webhook-Secret") or request.headers.get("apikey") or ""
         if incoming_secret != WEBHOOK_SECRET:
-            print(f"[WEBHOOK] REJEITADO: secret invalido")
+            print(f"[WEBHOOK] REJEITADO: secret invalido (esperado={WEBHOOK_SECRET[:4]}..., recebido={incoming_secret[:4] if incoming_secret else 'VAZIO'})")
+            print(f"[WEBHOOK] Headers: { {k:v for k,v in request.headers if k.lower() in ['x-webhook-secret','apikey','authorization','content-type']} }")
             return jsonify({"error": "unauthorized"}), 401
 
     try:
