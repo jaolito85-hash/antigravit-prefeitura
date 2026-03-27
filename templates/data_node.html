@@ -2691,10 +2691,59 @@
                 </div>
             `;
             document.getElementById('thread-modal-overlay').classList.remove('hidden');
+            // Auto-refresh da conversa enquanto modal aberto
+            startModalAutoRefresh(e.id);
         }
+
+        let _modalRefreshInterval = null;
+        let _currentModalId = null;
 
         function closeThreadModal() {
             document.getElementById('thread-modal-overlay').classList.add('hidden');
+            // Para o auto-refresh do modal
+            if (_modalRefreshInterval) {
+                clearInterval(_modalRefreshInterval);
+                _modalRefreshInterval = null;
+            }
+            _currentModalId = null;
+        }
+
+        function startModalAutoRefresh(feedbackId) {
+            // Para refresh anterior se existir
+            if (_modalRefreshInterval) clearInterval(_modalRefreshInterval);
+            _currentModalId = feedbackId;
+            // Atualiza a cada 5 segundos enquanto modal aberto
+            _modalRefreshInterval = setInterval(async () => {
+                if (!_currentModalId) return;
+                try {
+                    const res = await fetch('/api/events');
+                    const allEvents = await res.json();
+                    const updated = allEvents.find(e => e.id === _currentModalId);
+                    if (!updated) return;
+                    // Atualiza o cache
+                    const idx = _allEventsCache.findIndex(e => e.id === _currentModalId);
+                    if (idx >= 0) _allEventsCache[idx] = updated;
+                    // Atualiza só a timeline (sem fechar/reabrir o modal todo)
+                    const conversation = parseConversationEntries(updated);
+                    const timelineEl = document.getElementById(`thread-timeline-${_currentModalId}`);
+                    if (timelineEl) {
+                        timelineEl.innerHTML = conversation.map(item => {
+                            const isAgent = item.role === 'agent';
+                            const isOperator = item.role === 'operator';
+                            let roleLabel = 'Cidadão';
+                            let roleClass = 'client';
+                            if (isOperator) { roleLabel = 'Atendente'; roleClass = 'operator'; }
+                            else if (isAgent) { roleLabel = 'Clara'; roleClass = 'agent'; }
+                            const timeLabel = item.timestamp ? formatarHoraMensagem(item.timestamp) : '';
+                            return `<div class="thread-item ${roleClass}"><div class="chat-bubble"><div class="chat-meta"><span class="chat-role">${roleLabel}</span><span class="chat-time">${timeLabel}</span></div><div class="chat-text">${formatMessage(item.text)}</div></div></div>`;
+                        }).join('');
+                        // Auto-scroll para baixo
+                        timelineEl.scrollTop = timelineEl.scrollHeight;
+                    }
+                } catch (err) {
+                    // Silencia erros de refresh
+                }
+            }, 5000);
         }
 
         // --- HANDOFF FUNCTIONS ---

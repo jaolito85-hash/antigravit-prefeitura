@@ -2154,6 +2154,20 @@ SAUDACOES = {
     'oi bom dia', 'oi boa tarde', 'oi boa noite',
 }
 
+# Prefixos de saudação que, combinados com palavras genéricas, ainda são saudação
+SAUDACAO_PREFIXOS = [
+    'oi', 'ola', 'olá', 'bom dia', 'boa tarde', 'boa noite',
+    'hey', 'fala', 'salve', 'opa', 'oie', 'oii', 'hello', 'hi',
+]
+
+# Palavras que, quando combinadas com saudação, NÃO são reclamação
+SAUDACAO_COMPLEMENTOS = {
+    'prefeitura', 'pessoal', 'gente', 'galera', 'amigos', 'moço', 'moça',
+    'dona', 'senhor', 'senhora', 'clara', 'atendente', 'voz ativa',
+    'tudo bem', 'tudo bom', 'como vai', 'td bem', 'blz', 'beleza',
+    'obrigado', 'obrigada', 'valeu', 'brigado', 'brigada',
+}
+
 RESPOSTA_SAUDACAO = (
     "Olá! 👋 Sou a *Clara*, assistente virtual do programa *Voz Ativa* da Prefeitura de Ivaté.\n\n"
     "Você pode me enviar:\n"
@@ -2283,11 +2297,26 @@ TIPOS_NAO_SUPORTADOS = {
 
 
 def is_saudacao(text: str) -> bool:
-    """Detecta se a mensagem é apenas uma saudação."""
+    """Detecta se a mensagem é apenas uma saudação (inclui variações como 'Ola prefeitura')."""
     if not text:
         return False
     normalized = text.strip().lower().rstrip('!?.,:;')
-    return normalized in SAUDACOES
+    # Match exato
+    if normalized in SAUDACOES:
+        return True
+    # Match com complementos genéricos: "ola prefeitura", "boa tarde pessoal"
+    for prefixo in SAUDACAO_PREFIXOS:
+        if normalized.startswith(prefixo):
+            resto = normalized[len(prefixo):].strip().rstrip('!?.,:;')
+            if not resto:
+                return True
+            if resto in SAUDACAO_COMPLEMENTOS:
+                return True
+            # "ola prefeitura de ivate" → pega "prefeitura" como primeira palavra
+            primeira_palavra = resto.split()[0] if resto.split() else ''
+            if primeira_palavra in SAUDACAO_COMPLEMENTOS:
+                return True
+    return False
 
 
 def detectar_tipo_nao_suportado(message_content: dict) -> str | None:
