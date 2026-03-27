@@ -2787,6 +2787,20 @@ def webhook():
                         )
                     return jsonify({"status": f"unsupported_{tipo}"}), 200
 
+            # --- HANDOFF EARLY CHECK: se operador assumiu, toda mensagem vai pro thread ---
+            if text and remote_jid:
+                _handoff_fb = get_active_feedback(remote_jid)
+                if _handoff_fb and _handoff_fb.get('handoff_operator'):
+                    _op_name = _handoff_fb['handoff_operator']
+                    print(f"[HANDOFF] Feedback {_handoff_fb['id']} controlado por {_op_name} — registrando mensagem do cidadão")
+                    _cur_msg = _handoff_fb.get('message', '')
+                    _upd_msg = append_conversation_entry(_cur_msg, 'client', text)
+                    update_feedback(_handoff_fb['id'], {
+                        'message': _upd_msg,
+                        'updated_at': datetime.utcnow().isoformat()
+                    })
+                    return jsonify({"status": "handoff_active", "operator": _op_name}), 200
+
             # --- CONSULTA DE PROTOCOLO ---
             if text and remote_jid:
                 protocol_result = responder_consulta_protocolo(remote_jid, text)
@@ -2887,20 +2901,6 @@ def webhook():
                 text, foi_truncado = truncar_mensagem(text)
                 if foi_truncado:
                     send_whatsapp_message(remote_jid, "⚠️ Sua mensagem era muito longa e foi resumida. Tente ser mais breve (máximo ~10 linhas).")
-
-                # --- HANDOFF CHECK (antes do duplicate hash para não perder mensagens) ---
-                handoff_feedback = get_active_feedback(remote_jid)
-                if handoff_feedback and handoff_feedback.get('handoff_operator'):
-                    operator_name = handoff_feedback['handoff_operator']
-                    print(f"[HANDOFF] Feedback {handoff_feedback['id']} controlado por {operator_name} — Clara silenciada")
-                    # Registra a mensagem na conversa, sem resposta automática
-                    current_message = handoff_feedback.get('message', '')
-                    updated_message = append_conversation_entry(current_message, 'client', text)
-                    update_feedback(handoff_feedback['id'], {
-                        'message': updated_message,
-                        'updated_at': datetime.utcnow().isoformat()
-                    })
-                    return jsonify({"status": "handoff_active", "operator": operator_name}), 200
 
                 feedbacks = get_feedbacks()
                 msg_hash = hashlib.md5(f"{text}{remote_jid}".encode()).hexdigest()

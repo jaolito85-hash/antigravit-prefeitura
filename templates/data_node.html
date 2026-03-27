@@ -2772,19 +2772,22 @@
         }
 
         async function reloadAndReopenModal(feedbackId) {
-            // Reload feedbacks via existing filter flow, then reopen modal
-            const categoria = document.getElementById('filtro-categoria')?.value || '';
-            const prioridade = document.getElementById('filtro-prioridade')?.value || '';
-            const statusFilter = document.getElementById('filtro-status')?.value || 'ativos';
-
-            let params = [];
-            if (categoria) params.push(`categoria=${encodeURIComponent(categoria)}`);
-            if (prioridade) params.push(`prioridade=${encodeURIComponent(prioridade)}`);
-            if (statusFilter && statusFilter !== 'ativos') params.push(`status=${encodeURIComponent(statusFilter)}`);
-            const url = '/api/events' + (params.length ? '?' + params.join('&') : '');
-
-            await loadFeedbacks(url);
-            // Reopen the modal with updated data
+            // Fetch fresh data directly from API and update cache before reopening
+            try {
+                const res = await fetch('/api/events');
+                const allEvents = await res.json();
+                const currentStatusFilter = document.getElementById('filtro-status')?.value || 'ativos';
+                if (currentStatusFilter === 'ativos') {
+                    _allEventsCache = allEvents.filter(e => (e.status || 'aberto') !== 'resolvido');
+                } else {
+                    _allEventsCache = allEvents;
+                }
+                // Also trigger a full card re-render in background
+                loadFeedbacks('/api/events');
+            } catch (err) {
+                console.error('Erro ao recarregar dados:', err);
+            }
+            // Reopen modal with fresh cache
             openThreadModal(feedbackId);
         }
 
