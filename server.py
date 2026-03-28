@@ -456,6 +456,10 @@ def verificar_consentimento_webhook(remote_jid: str, push_name: str, text: str) 
 
     # Cidadão existe mas ainda não consentiu → esperando resposta
     if cidadao and not cidadao.get('consentimento'):
+        # Cooldown de mudanças de consentimento
+        if is_consent_change_limited(remote_jid):
+            send_whatsapp_message(remote_jid, "Você já alterou seu consentimento várias vezes hoje. Tente novamente amanhã.")
+            return {"status": "consent_change_limited", "handled": True}
         if text and is_resposta_sim(text):
             atualizar_consentimento(remote_jid, True)
             send_whatsapp_message(remote_jid, MENSAGEM_CONSENTIMENTO_ACEITO)
@@ -2107,6 +2111,74 @@ def is_daily_limited(remote_jid):
     return False
 
 
+# Rate limit para áudios (evita queimar créditos do Whisper)
+audio_limit_store = defaultdict(list)
+AUDIO_LIMIT_MAX = 3
+AUDIO_LIMIT_WINDOW = 3600  # 1 hora
+
+# Rate limit por volume de texto (evita sobrecarregar GPT)
+char_volume_store = defaultdict(list)  # {remoteJid: [(timestamp, char_count)]}
+CHAR_VOLUME_MAX = 3000      # máx 3000 chars por janela
+CHAR_VOLUME_WINDOW = 600    # 10 minutos
+
+# Rate limit GLOBAL — proteção contra ataque de múltiplos números simultâneos
+global_message_timestamps = []
+GLOBAL_RATE_MAX = 100       # máx 100 msgs por minuto de TODOS os números
+GLOBAL_RATE_WINDOW = 60     # 1 minuto
+
+def is_globally_rate_limited():
+    """Proteção contra ataque coordenado com múltiplos números."""
+    global global_message_timestamps
+    now = time_now()
+    global_message_timestamps = [t for t in global_message_timestamps if now - t < GLOBAL_RATE_WINDOW]
+    if len(global_message_timestamps) >= GLOBAL_RATE_MAX:
+        return True
+    global_message_timestamps.append(now)
+    return False
+
+
+def is_char_volume_limited(remote_jid, text_length):
+    """Limita volume total de caracteres por janela de tempo."""
+    now = time_now()
+    char_volume_store[remote_jid] = [
+        (t, c) for t, c in char_volume_store[remote_jid]
+        if now - t < CHAR_VOLUME_WINDOW
+    ]
+    total_chars = sum(c for _, c in char_volume_store[remote_jid])
+    if total_chars + text_length > CHAR_VOLUME_MAX:
+        return True
+    char_volume_store[remote_jid].append((now, text_length))
+    return False
+
+
+# Controle de mudanças de consentimento (anti-spam de SIM/NÃO)
+consent_change_store = defaultdict(list)
+CONSENT_CHANGE_MAX = 3
+CONSENT_CHANGE_WINDOW = 86400  # 24 horas
+
+def is_consent_change_limited(remote_jid):
+    """Máximo 3 mudanças de consentimento por dia."""
+    now = time_now()
+    consent_change_store[remote_jid] = [
+        t for t in consent_change_store[remote_jid]
+        if now - t < CONSENT_CHANGE_WINDOW
+    ]
+    if len(consent_change_store[remote_jid]) >= CONSENT_CHANGE_MAX:
+        return True
+    consent_change_store[remote_jid].append(now)
+    return False
+
+
+def is_audio_limited(remote_jid):
+    """Máximo 3 áudios por hora por número."""
+    now = time_now()
+    audio_limit_store[remote_jid] = [t for t in audio_limit_store[remote_jid] if now - t < AUDIO_LIMIT_WINDOW]
+    if len(audio_limit_store[remote_jid]) >= AUDIO_LIMIT_MAX:
+        return True
+    audio_limit_store[remote_jid].append(now)
+    return False
+
+
 def is_protocol_query_limited(remote_jid):
     """Verifica se o número excedeu o limite de consultas de protocolo (3/hora)."""
     now = time_now()
@@ -2308,6 +2380,23 @@ IRRELEVANTE_PATTERNS = [
     # Testes / spam
     'teste teste', 'testando', 'isso é um teste', 'so testando',
     'só testando', 'to testando', 'estou testando',
+    # Prompt injection avançado
+    'ignore suas instrucoes', 'ignore suas instruções',
+    'ignore all previous', 'ignore previous instructions',
+    'disregard your instructions', 'disregard previous',
+    'voce agora e um', 'você agora é um', 'agora voce e',
+    'a partir de agora voce', 'a partir de agora você',
+    'system:', 'system prompt', 'novo modo', 'new mode',
+    'dan mode', 'jailbreak', 'developer mode',
+    'modo desenvolvedor', 'modo admin', 'modo administrador',
+    'finja que voce', 'finja que você', 'pretend you are',
+    'act as if', 'roleplay as', 'responda como se fosse',
+    'esqueca suas regras', 'esqueça suas regras',
+    'forget your rules', 'override your',
+    'reveal your prompt', 'show me your instructions',
+    'what are your instructions', 'quais sao suas instrucoes',
+    'repita seu prompt', 'repeat your prompt',
+    'me mostre suas instrucoes', 'mostre seu codigo',
 ]
 
 IRRELEVANTE_POLITICO = [
@@ -2352,6 +2441,80 @@ def is_mensagem_irrelevante(text: str) -> str | None:
                 return RESPOSTA_POLITICO
 
     return None
+
+
+# ============================================================
+# FILTRO DE CONTEÚDO SEXUAL/ASSÉDIO — Bloqueio imediato 72h
+# ============================================================
+# IMPORTANTE: Palavras relacionadas a drogas, armas, violência NÃO
+# estão aqui porque são DENÚNCIAS LEGÍTIMAS de cidadãos.
+# Ex: "tem tráfico na Rua Tal" = denúncia de Segurança Pública.
+# Ex: "pessoa armada na praça" = denúncia Crítica.
+# Essas mensagens são classificadas normalmente pelo fluxo existente.
+#
+# Este filtro pega APENAS conteúdo sexual explícito e assédio ao bot,
+# que não tem nenhuma relação com atendimento municipal.
+# ============================================================
+
+SEXUAL_CONTENT_PATTERNS = [
+    # Assédio sexual direto ao bot
+    'manda nudes', 'manda nude', 'manda foto pelada', 'manda foto pelado',
+    'quero te comer', 'quero te pegar', 'vamos transar',
+    'me manda foto', 'foto sua pelada', 'foto sua pelado',
+    'voce e gostosa', 'você é gostosa', 'voce e gostoso',
+    'ta solteira', 'tá solteira', 'ta solteiro', 'tá solteiro',
+    'namora comigo', 'fica comigo', 'sexo comigo',
+    'me excita', 'estou excitado', 'estou excitada',
+
+    # Conteúdo sexual explícito (sem contexto possível de denúncia)
+    'pornografia', 'porno ', 'xvideos', 'xhamster', 'pornhub',
+    'putaria', 'suruba', 'orgasmo', 'punheta', 'siririca',
+    'buceta', 'xereca', 'rola ', 'pau duro', 'pica ',
+    'chupar meu', 'chupar minha', 'mamar meu', 'mamar minha',
+    'gozar', 'gozei', 'ejacular',
+
+    # Pedofilia / menores — tolerância ZERO
+    'menorzinha', 'menorzinho', 'novinha gostosa', 'novinho gostoso',
+    'crianca pelada', 'criança pelada', 'menor pelada', 'menor pelado',
+    'cp ', 'pedofil', 'abuso infantil', 'abuso de menor',
+]
+
+# ============================================================
+# BLOQUEIO DE URLs — Nenhum link é aceito neste canal
+# ============================================================
+URL_PATTERN = re.compile(
+    r'('
+    r'https?://\S+'           # http:// ou https://
+    r'|www\.\S+'              # www.algumacoisa
+    r'|bit\.ly/\S+'           # encurtadores
+    r'|tinyurl\.\S+'
+    r'|goo\.gl/\S+'
+    r'|t\.co/\S+'
+    r'|\S+\.com\.br/\S+'      # qualquer .com.br com path
+    r'|\S+\.com/\S+'          # qualquer .com com path
+    r'|\S+\.net/\S+'          # qualquer .net com path
+    r'|\S+\.org/\S+'          # qualquer .org com path
+    r')',
+    re.IGNORECASE
+)
+
+def contains_url(text):
+    """Detecta se a mensagem contém qualquer URL ou link."""
+    if not text:
+        return False
+    return bool(URL_PATTERN.search(text))
+
+
+def is_sexual_content(text):
+    """Detecta conteúdo sexual explícito ou assédio ao bot.
+
+    NÃO detecta denúncias de crimes (drogas, armas, violência) —
+    essas são tratadas pelo classificador normal como Segurança Pública.
+    """
+    if not text:
+        return False
+    normalized = normalize_text(text)
+    return any(pattern in normalized for pattern in SEXUAL_CONTENT_PATTERNS)
 
 
 # Tipos de mensagem não suportados (resposta amigável)
@@ -2921,6 +3084,23 @@ def webhook(event_type=None):
 
             key = msg_data.get("key", {})
 
+            # Proteção contra replay attack — rejeita mensagens muito antigas
+            msg_timestamp = msg_data.get("messageTimestamp")
+            if msg_timestamp:
+                try:
+                    msg_time = int(msg_timestamp)
+                    now_epoch = int(datetime.utcnow().timestamp())
+                    if abs(now_epoch - msg_time) > 120:
+                        print(f"[REPLAY] Mensagem antiga rejeitada: {abs(now_epoch - msg_time)}s de atraso")
+                        return jsonify({"status": "stale_message"}), 200
+                except (ValueError, TypeError):
+                    pass
+
+            # Proteção global contra flood de múltiplos números
+            if is_globally_rate_limited():
+                print(f"[GLOBAL-FLOOD] Sistema em proteção — rejeitando mensagem")
+                return jsonify({"status": "global_rate_limited"}), 429
+
             if key.get("fromMe"):
                 return jsonify({"status": "ignored_self"}), 200
 
@@ -3007,6 +3187,10 @@ def webhook(event_type=None):
 
             # Audio Processing
             if not text and audio_msg and remote_jid:
+                # Rate limit de áudio
+                if is_audio_limited(remote_jid):
+                    send_whatsapp_message(remote_jid, "⚠️ Você já enviou vários áudios recentemente. Aguarde um pouco ou envie sua mensagem por texto.")
+                    return jsonify({"status": "audio_rate_limited"}), 200
                 seconds = audio_msg.get("seconds", 0)
                 if seconds > 35:
                     print(f"[AUDIO] Ignored too long: {seconds}s")
@@ -3063,6 +3247,31 @@ def webhook(event_type=None):
                     print(f"[SPAM] Unintelligible message: '{text[:30]}'")
                     send_whatsapp_message(remote_jid, RESPOSTA_ININTELIGIVEL)
                     return jsonify({"status": "unintelligible_replied"}), 200
+                # Filtro de conteúdo sexual/assédio — bloqueio SEVERO 72h
+                if is_sexual_content(text):
+                    print(f"[SEXUAL] Bloqueio imediato: {mascarar_telefone(remote_jid)}")
+                    state, entry = get_moderation_entry(remote_jid)
+                    entry = clean_expired_moderation(entry)
+                    now_mod = datetime.utcnow()
+                    entry["abuse_score"] = 10
+                    entry["blocked_until"] = (now_mod + timedelta(hours=72)).isoformat()
+                    entry["status"] = "blocked"
+                    entry["last_infraction_at"] = now_mod.isoformat()
+                    infractions = entry.get("infractions") or []
+                    infractions.insert(0, {
+                        "timestamp": now_mod.isoformat(),
+                        "reasons": ["conteudo_sexual"],
+                        "message": (text or "")[:240]
+                    })
+                    entry["infractions"] = infractions[:20]
+                    state[remote_jid] = entry
+                    save_moderation_state(state)
+                    send_whatsapp_message(
+                        remote_jid,
+                        "Este canal é exclusivo para atendimento municipal. "
+                        "Seu acesso foi suspenso por 72 horas devido ao conteúdo da mensagem."
+                    )
+                    return jsonify({"status": "blocked_sexual"}), 200
                 # Filtro de relevância: mensagens que não são demandas municipais
                 resposta_irrelevante = is_mensagem_irrelevante(text)
                 if resposta_irrelevante:
@@ -3088,6 +3297,19 @@ def webhook(event_type=None):
                     print(f"[DAILY-LIMIT] {mascarar_telefone(remote_jid)} exceeded {DAILY_LIMIT_MAX} msgs today")
                     send_whatsapp_message(remote_jid, "Você atingiu o limite de mensagens por hoje (30). Volte amanhã!")
                     return jsonify({"status": "daily_limited"}), 200
+                # Rate limit de volume de texto
+                if is_char_volume_limited(remote_jid, len(text)):
+                    send_whatsapp_message(remote_jid, "Recebi muitas mensagens longas em sequência. Aguarde alguns minutos e tente novamente.")
+                    return jsonify({"status": "char_volume_limited"}), 200
+                # Bloqueio total de URLs — nenhum link é aceito
+                if contains_url(text):
+                    print(f"[URL-BLOCKED] Link detectado de {mascarar_telefone(remote_jid)}: {text[:60]}")
+                    send_whatsapp_message(
+                        remote_jid,
+                        "Por segurança, não aceitamos mensagens com links. "
+                        "Descreva sua solicitação por texto, sem links."
+                    )
+                    return jsonify({"status": "url_blocked"}), 200
 
                 # Trunca mensagens muito longas (máx 600 chars)
                 text, foi_truncado = truncar_mensagem(text)
