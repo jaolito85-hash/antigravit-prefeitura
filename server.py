@@ -17,7 +17,7 @@ load_dotenv()
 
 app = Flask(__name__, static_folder='static', static_url_path='/static')
 app.config['TEMPLATES_AUTO_RELOAD'] = True
-app.secret_key = os.getenv("FLASK_SECRET_KEY", "TROQUE-ESTA-CHAVE-EM-PRODUCAO")
+app.secret_key = os.getenv("FLASK_SECRET_KEY") or os.urandom(32).hex()
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
