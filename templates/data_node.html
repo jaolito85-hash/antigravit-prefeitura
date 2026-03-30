@@ -3539,9 +3539,20 @@
         }
 
         function openFeedbacksByRegion(regionName) {
-            nav('feedbacks', document.querySelector('.nav-item[onclick*="feedbacks"]'));
             closeRegionModal();
-            loadFeedbacks(`/api/events?regiao=${encodeURIComponent(regionName)}`);
+            // Navega para feedbacks SEM o aplicarFiltros automático do nav()
+            document.querySelectorAll('.main').forEach(d => d.classList.add('hidden'));
+            document.getElementById('view-feedbacks').classList.remove('hidden');
+            document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+            const feedbackNav = document.querySelector('.nav-item[onclick*="feedbacks"]');
+            if (feedbackNav) feedbackNav.classList.add('active');
+            // Seta o filtro de bairro e aplica
+            document.getElementById('filtro-status').value = 'ativos';
+            document.getElementById('filtro-categoria').value = '';
+            document.getElementById('filtro-prioridade').value = '';
+            document.getElementById('filtro-bairro').value = regionName;
+            document.getElementById('busca-protocolo').value = '';
+            aplicarFiltros();
         }
 
         function openThreadFromRegion(eventId) {
