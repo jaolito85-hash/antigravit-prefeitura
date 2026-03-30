@@ -249,6 +249,26 @@
             box-shadow: 0 0 0 2px #ef444422;
         }
 
+        .handoff-card {
+            border-color: rgba(129, 140, 248, 0.5) !important;
+            box-shadow: 0 0 12px rgba(99, 102, 241, 0.2), 0 0 0 1px rgba(129, 140, 248, 0.3);
+        }
+
+        .handoff-card-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            background: rgba(99, 102, 241, 0.15);
+            color: #a5b4fc;
+            border: 1px solid rgba(129, 140, 248, 0.4);
+            font-size: 0.62rem;
+            font-weight: 700;
+            padding: 2px 7px;
+            border-radius: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
         @keyframes pulse {
             0%, 100% { transform: scale(1); }
             50% { transform: scale(0.93); }
@@ -2737,10 +2757,14 @@
                         const _locBadge2 = (_locStatus2 !== 'completo' && e.urgency !== 'Positivo')
                             ? `<span title="Endereço não informado" style="display:inline-flex;align-items:center;gap:2px;background:#f59e0b18;color:#f59e0b;border:1px solid #f59e0b55;font-size:0.62rem;font-weight:700;padding:2px 6px;border-radius:4px;margin-left:4px;"><i class="ri-map-pin-2-line"></i> SEM ENDEREÇO</span>`
                             : '';
+                        const _isHandoff2 = !!e.handoff_operator;
+                        const _handoffBadge2 = _isHandoff2
+                            ? `<span class="handoff-card-badge"><i class="ri-user-voice-fill"></i> ${e.handoff_operator}</span>`
+                            : '';
                         container.innerHTML += `
-                            <div class="feedback-card clickable${hasNewMsg2 ? ' new-msg-card' : ''}" onclick="openThreadModal(${e.id})" data-id="${e.id}">
+                            <div class="feedback-card clickable${hasNewMsg2 ? ' new-msg-card' : ''}${_isHandoff2 ? ' handoff-card' : ''}" onclick="openThreadModal(${e.id})" data-id="${e.id}">
                                 <div class="fb-header">
-                                    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;"><span class="fb-tag" style="background:${urgencyColor}20; color:${urgencyColor}; border:1px solid ${urgencyColor}">${e.category}</span>${_locBadge2}${newMsgBadge2}</div>
+                                    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;"><span class="fb-tag" style="background:${urgencyColor}20; color:${urgencyColor}; border:1px solid ${urgencyColor}">${e.category}</span>${_locBadge2}${newMsgBadge2}${_handoffBadge2}</div>
                                     <div class="fb-time" title="${e.timestamp}"><i class="ri-time-line"></i> ${formatarTempo(e.timestamp)}</div>
                                 </div>
                                 ${mediaThumb}
