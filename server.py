@@ -1317,6 +1317,11 @@ Regras de categoria:
 - Meio Ambiente: queimadas, desmatamento, rios/córregos, agrotóxicos, poluição
 - Agricultura & Rural: lavoura, gado, estradas rurais, EMATER, irrigação, tratores, chácara, sítio
 - Assistência Social: CRAS, bolsa família, vulnerabilidade, violência doméstica
+- Segurança Pública: assalto, roubo, furto, briga, tráfico, drogas, arma, tiro, tiroteio, policiamento, viatura, ronda, vandalismo, invasão, ameaça, pessoa armada
+- Saúde & Atendimento: UBS, hospital, médico, remédio, consulta, vacina, fila de saúde, pronto socorro, internação
+- Educação & Escolas: escola, creche, professor, merenda, matrícula, transporte escolar
+- Transporte & Mobilidade: ônibus, semáforo, trânsito, ciclovia, estacionamento
+- Infraestrutura & Obras: buraco, asfalto, calçada, obra, ponte, muro, construção
 - Critico = emergências, risco de vida, desastres, violência
 - Urgente = problemas graves, serviços essenciais parados
 - Positivo = elogios, agradecimentos
@@ -1419,7 +1424,8 @@ SOBRE PERGUNTAS DE ACOMPANHAMENTO (muito importante):
 - Se menciona falta de produto/serviço (ex: remédio, merenda, água), pergunte QUAL produto/serviço está faltando E o local completo.
 - Se não menciona absolutamente nenhum local, pergunte a rua e o bairro/conjunto.
 - NUNCA pergunte só "bairro ou rua" quando há um local institucional mencionado — seja contextual.
-- NUNCA mencione "Categoria classificada é" de forma robótica."""
+- NUNCA mencione "Categoria classificada é" de forma robótica.
+- NUNCA prometa prazo de resolução (ex: "vamos resolver hoje", "em breve"). Diga apenas que a equipe foi acionada/irá analisar."""
 
         response = client.chat.completions.create(
             model="gpt-4o-mini",
@@ -3690,6 +3696,7 @@ REGRAS ABSOLUTAS:
 - Se o cidadão expressar frustração, valide-a com frases como "Isso é inaceitável", "Entendo sua indignação", "Você tem razão em estar insatisfeito".
 - NÃO use linguagem burocrática. NÃO diga "protocolo" nessa mensagem.
 - NÃO repita perguntas que já foram feitas no histórico.
+- NUNCA prometa prazo de resolução. Diga apenas que a equipe foi acionada/irá analisar.
 - Tom: humano, próximo, como alguém que genuinamente se importa.
 
 SEGURANÇA:
