@@ -22,7 +22,8 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
 # Comando de inicialização (Produção usando Gunicorn)
-# -w 2: reduzido para evitar OOM
+# -w 1: worker único garante que rate limits em memória funcionem corretamente
+# --threads 4: concorrência via threads dentro do worker único
 # --timeout 120: permite chamadas OpenAI longas sem matar worker
 # --graceful-timeout 60: tempo para shutdown gracioso
-CMD ["gunicorn", "-w", "2", "--threads", "4", "--timeout", "120", "--graceful-timeout", "60", "-b", "0.0.0.0:5002", "-k", "gthread", "server:app"]
+CMD ["gunicorn", "-w", "1", "--threads", "4", "--timeout", "120", "--graceful-timeout", "60", "-b", "0.0.0.0:5002", "-k", "gthread", "server:app"]

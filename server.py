@@ -23,6 +23,9 @@ app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
 # Webhook Secret (Evolution API deve enviar este header)
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
+if not WEBHOOK_SECRET:
+    print("[SEGURANCA] AVISO CRITICO: WEBHOOK_SECRET nao configurado! Webhook rejeitara TODAS as requisicoes.")
+    print("[SEGURANCA] Configure WEBHOOK_SECRET no .env para aceitar mensagens.")
 
 # Config
 EVOLUTION_API_URL = os.getenv("EVOLUTION_API_URL")
@@ -1469,10 +1472,10 @@ def mascarar_telefone(jid: str) -> str:
 
 
 def send_whatsapp_message(remote_jid, message):
-    """Sends a text message using Evolution API."""
+    """Envia mensagem de texto via Evolution API com retry."""
     if not EVOLUTION_API_URL or not EVOLUTION_API_KEY or not EVOLUTION_INSTANCE_NAME:
-        print(f"❌ Evolution API not configured!")
-        return
+        print(f"[WHATSAPP] Evolution API nao configurada!")
+        return False
 
     url = f"{EVOLUTION_API_URL}/message/sendText/{EVOLUTION_INSTANCE_NAME}"
     headers = {
@@ -1481,13 +1484,21 @@ def send_whatsapp_message(remote_jid, message):
     }
     payload = {"number": remote_jid, "text": message}
 
-    print(f"📤 Sending WhatsApp reply to: {mascarar_telefone(remote_jid)}")
-
-    try:
-        response = requests.post(url, json=payload, headers=headers, timeout=10)
-        print(f"📤 Response Status: {response.status_code}")
-    except Exception as e:
-        print(f"❌ Error sending message: {e}")
+    for attempt in range(2):
+        try:
+            response = requests.post(url, json=payload, headers=headers, timeout=10)
+            if response.status_code in (200, 201):
+                return True
+            print(f"[WHATSAPP] Erro ao enviar para {mascarar_telefone(remote_jid)}: status={response.status_code}")
+            if attempt == 0 and response.status_code >= 500:
+                continue  # retry em erro de servidor
+            return False
+        except requests.exceptions.Timeout:
+            print(f"[WHATSAPP] Timeout ao enviar para {mascarar_telefone(remote_jid)} (tentativa {attempt + 1})")
+        except Exception as e:
+            print(f"[WHATSAPP] Erro ao enviar para {mascarar_telefone(remote_jid)}: {e}")
+            return False
+    return False
 
 # --- AI CITY PULSE ---
 def generate_ai_pulse(feedbacks):
@@ -3277,12 +3288,14 @@ def append_to_feedback(feedback_id, old_message, new_content, new_region=None, n
 def webhook(event_type=None):
     print(f"[WEBHOOK] Requisicao recebida! Path: /webhook/{event_type or ''} IP: {request.remote_addr}")
     # Validação de origem do webhook
-    if WEBHOOK_SECRET:
-        incoming_secret = request.headers.get("X-Webhook-Secret") or request.headers.get("apikey") or ""
-        if incoming_secret != WEBHOOK_SECRET:
-            print(f"[WEBHOOK] REJEITADO: secret invalido (esperado={WEBHOOK_SECRET[:4]}..., recebido={incoming_secret[:4] if incoming_secret else 'VAZIO'})")
-            print(f"[WEBHOOK] Headers: { {k:v for k,v in request.headers if k.lower() in ['x-webhook-secret','apikey','authorization','content-type']} }")
-            return jsonify({"error": "unauthorized"}), 401
+    if not WEBHOOK_SECRET:
+        print("[WEBHOOK] REJEITADO: WEBHOOK_SECRET nao configurado — todas as requests bloqueadas por seguranca")
+        return jsonify({"error": "webhook_secret_not_configured"}), 503
+
+    incoming_secret = request.headers.get("X-Webhook-Secret") or request.headers.get("apikey") or ""
+    if incoming_secret != WEBHOOK_SECRET:
+        print(f"[WEBHOOK] REJEITADO: secret invalido (recebido={incoming_secret[:4] + '...' if incoming_secret else 'VAZIO'})")
+        return jsonify({"error": "unauthorized"}), 401
 
     try:
         data = request.json
@@ -3365,11 +3378,32 @@ def webhook(event_type=None):
 
             # --- HANDOFF EARLY CHECK: se operador assumiu, toda mensagem vai pro thread ---
             if text and remote_jid:
+                # Filtros mínimos mesmo durante handoff (segurança)
+                restriction = get_active_restriction(remote_jid)
+                if restriction:
+                    send_whatsapp_message(remote_jid, restriction["reply"])
+                    return jsonify({"status": restriction["status"]}), 200
+                if is_sexual_content(text):
+                    print(f"[SEXUAL-HANDOFF] Bloqueio durante handoff: {mascarar_telefone(remote_jid)}")
+                    state, entry = get_moderation_entry(remote_jid)
+                    entry = clean_expired_moderation(entry)
+                    now_mod = datetime.utcnow()
+                    entry["abuse_score"] = 10
+                    entry["blocked_until"] = (now_mod + timedelta(hours=72)).isoformat()
+                    entry["status"] = "blocked"
+                    entry["last_infraction_at"] = now_mod.isoformat()
+                    state[remote_jid] = entry
+                    save_moderation_state(state)
+                    send_whatsapp_message(remote_jid, "Seu acesso foi suspenso por 72 horas devido ao conteúdo da mensagem.")
+                    return jsonify({"status": "blocked_sexual_handoff"}), 200
+                if is_burst_limited(remote_jid):
+                    return jsonify({"status": "burst_limited_handoff"}), 200
+
                 try:
                     _handoff_fb = get_active_feedback(remote_jid)
                     if _handoff_fb and _handoff_fb.get('handoff_operator'):
                         _op_name = _handoff_fb['handoff_operator']
-                        print(f"[HANDOFF] Feedback {_handoff_fb['id']} controlado por {_op_name} — registrando: '{text[:50]}'")
+                        print(f"[HANDOFF] Feedback {_handoff_fb['id']} controlado por {_op_name}")
                         _cur_msg = _handoff_fb.get('message', '')
                         _upd_msg = append_conversation_entry(_cur_msg, 'client', text)
                         update_feedback(_handoff_fb['id'], {
@@ -3379,7 +3413,7 @@ def webhook(event_type=None):
                         return jsonify({"status": "handoff_active", "operator": _op_name}), 200
                 except Exception as _hf_err:
                     # Se Supabase falhar, continua fluxo normal (Clara responde)
-                    print(f"[HANDOFF-CHECK] Supabase indisponível, continuando fluxo normal: {_hf_err}")
+                    print(f"[HANDOFF-CHECK] Supabase indisponivel, continuando fluxo normal: {_hf_err}")
 
             # --- CONSULTA DE PROTOCOLO ---
             if text and remote_jid:
@@ -3539,13 +3573,24 @@ def webhook(event_type=None):
                 if foi_truncado:
                     send_whatsapp_message(remote_jid, "⚠️ Sua mensagem era muito longa e foi resumida. Tente ser mais breve (máximo ~10 linhas).")
 
-                feedbacks = get_feedbacks()
+                # Busca só feedbacks do mesmo remetente para checar duplicatas (evita full table scan)
+                sender_feedbacks = []
+                sb_dup = get_supabase()
+                if sb_dup:
+                    try:
+                        dup_resp = sb_dup.table('feedbacks').select('message,sender').eq('sender', remote_jid).limit(20).execute()
+                        sender_feedbacks = dup_resp.data or []
+                    except Exception:
+                        sender_feedbacks = []
+                if not sender_feedbacks:
+                    sender_feedbacks = [fb for fb in load_json(EVENTS_FILE, []) if fb.get('sender') == remote_jid][:20]
+
                 msg_hash = hashlib.md5(f"{text}{remote_jid}".encode()).hexdigest()
                 existing_hashes = {
                     hashlib.md5(
                         f"{get_feedback_customer_text(fb.get('message', '')) or fb.get('message', '')}{fb.get('sender', '')}".encode()
                     ).hexdigest()
-                    for fb in feedbacks
+                    for fb in sender_feedbacks
                 }
                 if msg_hash in existing_hashes:
                     print(f"[CACHE] Ignored Duplicate message")
@@ -3867,7 +3912,7 @@ def list_moderation():
         active_block = blocked_until and blocked_until > now
         if active_mute or active_block or entry.get("abuse_score", 0) > 0:
             result.append({
-                "phone": jid,
+                "phone": mascarar_telefone(jid),
                 "abuse_score": entry.get("abuse_score", 0),
                 "status": entry.get("status"),
                 "mute_until": entry.get("mute_until"),
@@ -3890,8 +3935,8 @@ def reset_moderation():
     if phone in state:
         del state[phone]
         save_moderation_state(state)
-        print(f"[ADMIN] Moderação zerada para {phone}")
-        return jsonify({"success": True, "phone": phone})
+        print(f"[ADMIN] Moderação zerada para {mascarar_telefone(phone)}")
+        return jsonify({"success": True, "phone": mascarar_telefone(phone)})
     return jsonify({"success": False, "message": "número não encontrado no estado de moderação"})
 
 @app.route("/api/feedback/<int:feedback_id>/status", methods=["PUT"])
