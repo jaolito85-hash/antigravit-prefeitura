@@ -906,20 +906,22 @@
         .region-card {
             cursor: pointer;
             overflow: hidden;
-            transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
+            transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+            background: linear-gradient(165deg, rgba(20, 20, 35, 0.95), rgba(14, 14, 24, 0.98));
+            border: 1px solid rgba(52, 211, 153, 0.15);
         }
 
         .region-card:hover {
-            transform: translateY(-2px);
-            border-color: rgba(5, 150, 105, 0.7);
-            box-shadow: 0 16px 34px rgba(5, 150, 105, 0.12);
+            transform: translateY(-3px);
+            border-color: rgba(52, 211, 153, 0.5);
+            box-shadow: 0 16px 40px rgba(5, 150, 105, 0.15), 0 0 0 1px rgba(52, 211, 153, 0.1);
         }
 
         .region-card::after {
             content: "";
             position: absolute;
             inset: 0;
-            background: radial-gradient(circle at top right, rgba(5, 150, 105, 0.18), transparent 44%);
+            background: radial-gradient(circle at top right, rgba(5, 150, 105, 0.12), transparent 50%);
             pointer-events: none;
         }
 
@@ -1083,34 +1085,43 @@
         }
 
         .btn-add {
-            background: var(--accent-primary);
+            background: linear-gradient(135deg, #059669, #10b981);
             color: white;
             border: none;
-            padding: 8px 16px;
-            border-radius: 6px;
+            padding: 10px 20px;
+            border-radius: 12px;
             font-weight: 600;
             cursor: pointer;
             display: flex;
             align-items: center;
-            gap: 5px;
-            font-size: 0.9rem;
+            gap: 6px;
+            font-size: 0.88rem;
+            transition: all 0.25s ease;
+            box-shadow: 0 4px 12px rgba(5, 150, 105, 0.25);
+        }
+        .btn-add:hover {
+            transform: scale(1.03);
+            box-shadow: 0 6px 20px rgba(5, 150, 105, 0.35);
         }
 
         .region-card-header {
             display: flex;
-            align-items: flex-start;
+            align-items: center;
             justify-content: space-between;
             gap: 12px;
-            margin-bottom: 12px;
+            margin-bottom: 14px;
             position: relative;
             z-index: 1;
         }
 
         .region-card-title {
-            font-size: 1rem;
+            font-size: 1.05rem;
             font-weight: 700;
             line-height: 1.25;
             max-width: 80%;
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
 
         .region-chip {
@@ -1119,7 +1130,7 @@
             gap: 5px;
             font-size: 0.72rem;
             font-weight: 700;
-            padding: 4px 8px;
+            padding: 5px 10px;
             border-radius: 999px;
             border: 1px solid rgba(52, 211, 153, 0.25);
             background: rgba(5, 150, 105, 0.15);
@@ -1137,10 +1148,53 @@
 
         .region-kpi {
             border: 1px solid rgba(255, 255, 255, 0.06);
-            border-radius: 10px;
-            padding: 10px 12px;
-            background: rgba(255, 255, 255, 0.02);
+            border-radius: 12px;
+            padding: 12px 14px;
+            background: rgba(255, 255, 255, 0.025);
+            position: relative;
+            overflow: hidden;
+            transition: border-color 0.2s ease, background 0.2s ease;
         }
+        .region-kpi:hover {
+            border-color: rgba(255, 255, 255, 0.12);
+            background: rgba(255, 255, 255, 0.04);
+        }
+        /* Barra colorida no topo de cada KPI */
+        .region-kpi::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            border-radius: 12px 12px 0 0;
+        }
+        .region-kpi.kpi-demandas::before { background: linear-gradient(90deg, #3b82f6, #6366f1); }
+        .region-kpi.kpi-criticas::before { background: linear-gradient(90deg, #ef4444, #f97316); }
+        .region-kpi.kpi-resolucao::before { background: linear-gradient(90deg, #10b981, #34d399); }
+        .region-kpi.kpi-humor::before { background: linear-gradient(90deg, #8b5cf6, #a855f7); }
+
+        /* Ícone do KPI */
+        .region-kpi-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.1rem;
+            margin-bottom: 10px;
+        }
+        .kpi-demandas .region-kpi-icon { background: rgba(59, 130, 246, 0.15); color: #60a5fa; }
+        .kpi-criticas .region-kpi-icon { background: rgba(239, 68, 68, 0.15); color: #f87171; }
+        .kpi-resolucao .region-kpi-icon { background: rgba(16, 185, 129, 0.15); color: #34d399; }
+        .kpi-humor .region-kpi-icon { background: rgba(139, 92, 246, 0.15); color: #a78bfa; }
+
+        /* Valor do KPI colorido */
+        .kpi-demandas .region-kpi-value { color: #93c5fd; }
+        .kpi-criticas .region-kpi-value { color: #fca5a5; }
+        .kpi-resolucao .region-kpi-value { color: #6ee7b7; }
+        .kpi-humor .region-kpi-value { color: #c4b5fd; }
 
         .region-kpi-label {
             font-size: 0.68rem;
@@ -1151,15 +1205,15 @@
         }
 
         .region-kpi-value {
-            font-size: 1.05rem;
-            font-weight: 700;
+            font-size: 1.3rem;
+            font-weight: 800;
             color: #fff;
         }
 
         .region-card-footer {
             margin-top: 16px;
             padding-top: 12px;
-            border-top: 1px solid var(--border);
+            border-top: 1px solid rgba(255, 255, 255, 0.06);
             display: flex;
             align-items: center;
             justify-content: space-between;
@@ -1169,9 +1223,10 @@
         }
 
         .region-card-note {
-            font-size: 0.78rem;
+            font-size: 0.76rem;
             color: var(--text-muted);
             line-height: 1.4;
+            font-style: italic;
         }
 
         .region-action {
@@ -1183,6 +1238,11 @@
             font-weight: 700;
             text-transform: uppercase;
             letter-spacing: 0.05em;
+            transition: color 0.2s, gap 0.2s;
+        }
+        .region-card:hover .region-action {
+            color: #34d399;
+            gap: 10px;
         }
 
         .region-summary-card {
@@ -1215,12 +1275,12 @@
         .region-modal-layout {
             display: flex;
             flex-direction: column;
-            gap: 18px;
+            gap: 20px;
         }
 
         .region-modal-kpis {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            grid-template-columns: repeat(4, 1fr);
             gap: 12px;
         }
 
@@ -1231,15 +1291,18 @@
         }
 
         .region-panel {
-            background: rgba(255, 255, 255, 0.03);
-            border: 1px solid var(--border);
-            border-radius: 14px;
-            padding: 16px;
+            background: rgba(255, 255, 255, 0.025);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 16px;
+            padding: 18px;
         }
 
         .region-panel h3 {
-            font-size: 0.95rem;
-            margin-bottom: 12px;
+            font-size: 0.92rem;
+            margin-bottom: 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
 
         .region-breakdown-item {
@@ -1247,9 +1310,18 @@
             align-items: center;
             justify-content: space-between;
             gap: 10px;
-            padding: 9px 0;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            padding: 10px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.04);
             font-size: 0.84rem;
+        }
+        .region-breakdown-item span {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .region-breakdown-item strong {
+            font-weight: 700;
+            color: #e2e8f0;
         }
 
         .region-breakdown-item:last-child {
@@ -1257,19 +1329,37 @@
             padding-bottom: 0;
         }
 
+        /* Dots coloridos nas categorias */
+        .cat-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        /* Barra de pressão nas categorias */
+        .cat-pressure-bar {
+            height: 4px;
+            border-radius: 2px;
+            flex-shrink: 0;
+            margin-left: 8px;
+        }
+
         .region-feed-item {
-            padding: 12px 14px;
-            border-radius: 12px;
-            border: 1px solid rgba(255, 255, 255, 0.06);
-            background: #0f1118;
+            padding: 14px 16px;
+            border-radius: 14px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            background: rgba(15, 17, 24, 0.8);
             margin-bottom: 10px;
             cursor: pointer;
-            transition: transform 0.18s, border-color 0.18s;
+            transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+            border-left: 3px solid transparent;
         }
 
         .region-feed-item:hover {
             transform: translateY(-1px);
-            border-color: rgba(52, 211, 153, 0.35);
+            border-color: rgba(52, 211, 153, 0.3);
+            background: rgba(15, 17, 24, 1);
         }
 
         .region-feed-item:last-child {
@@ -1286,10 +1376,28 @@
             color: var(--text-muted);
         }
 
+        .region-feed-category {
+            font-size: 0.7rem;
+            font-weight: 600;
+            padding: 2px 8px;
+            border-radius: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
         .region-feed-text {
-            color: #e5e7eb;
-            font-size: 0.88rem;
-            line-height: 1.45;
+            color: #e2e8f0;
+            font-size: 0.86rem;
+            line-height: 1.5;
+        }
+
+        .region-feed-urgency {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            margin-top: 8px;
         }
 
         .region-modal-actions {
@@ -1297,6 +1405,24 @@
             justify-content: flex-end;
             gap: 10px;
             flex-wrap: wrap;
+        }
+
+        .region-dominante {
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1px solid rgba(255, 255, 255, 0.06);
+        }
+        .region-dominante .region-kpi-label {
+            font-size: 0.7rem;
+            margin-bottom: 2px;
+        }
+        .region-dominante-value {
+            font-size: 1.05rem;
+            font-weight: 800;
+            color: #f87171;
+            display: flex;
+            align-items: center;
+            gap: 6px;
         }
 
         .intel-hero {
@@ -1885,6 +2011,10 @@
             /* Cards grid */
             .manage-grid {
                 grid-template-columns: 1fr;
+            }
+
+            .region-modal-kpis {
+                grid-template-columns: repeat(2, 1fr);
             }
 
             .region-modal-panels {
@@ -3748,25 +3878,47 @@
 
         function openRegionModal(regionName) {
             const summary = summarizeRegion(regionName, regionEventsCache);
+            const catColors = ['#ef4444', '#f59e0b', '#3b82f6', '#8b5cf6', '#10b981', '#f97316', '#ec4899'];
+            const maxCatCount = summary.topCategories.length ? Math.max(...summary.topCategories.map(i => i.count)) : 1;
             const topCategoriesHtml = summary.topCategories.length
-                ? summary.topCategories.map(item => `
+                ? summary.topCategories.map((item, idx) => {
+                    const dotColor = catColors[idx % catColors.length];
+                    const barWidth = Math.max(20, (item.count / maxCatCount) * 100);
+                    return `
                     <div class="region-breakdown-item">
-                        <span>${item.name}</span>
-                        <strong>${item.count}</strong>
-                    </div>
-                `).join('')
+                        <span><span class="cat-dot" style="background:${dotColor};"></span> ${item.name}</span>
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            <div class="cat-pressure-bar" style="width:${barWidth}px;background:${dotColor};"></div>
+                            <strong>${item.count}</strong>
+                        </div>
+                    </div>`;
+                }).join('')
                 : '<p style="color:var(--text-muted);font-size:0.84rem;">Nenhum feedback recebido nessa região ainda.</p>';
 
+            const feedCatColors = {
+                'Segurança Pública': '#ef4444', 'Infraestrutura & Obras': '#f59e0b',
+                'Saúde & Atendimento': '#3b82f6', 'Meio Ambiente': '#10b981',
+                'Educação': '#8b5cf6', 'Iluminação Pública': '#fbbf24',
+                'Trânsito & Mobilidade': '#f97316', 'Assistência Social': '#ec4899'
+            };
             const latestHtml = summary.latest.length
-                ? summary.latest.map(item => `
-                    <div class="region-feed-item" onclick="openThreadFromRegion(${item.id})">
+                ? summary.latest.map(item => {
+                    const cat = item.category || 'Geral';
+                    const catColor = feedCatColors[cat] || '#6b7280';
+                    const urg = (item.urgency || '').toLowerCase();
+                    let urgDot = '', urgLabel = '';
+                    if (urg.includes('crit') || urg.includes('crít')) { urgDot = '#ef4444'; urgLabel = 'Crítico'; }
+                    else if (urg.includes('urge')) { urgDot = '#f59e0b'; urgLabel = 'Urgente'; }
+                    return `
+                    <div class="region-feed-item" onclick="openThreadFromRegion(${item.id})" style="border-left-color:${catColor};">
                         <div class="region-feed-meta">
-                            <span>${item.category || 'Geral'}</span>
+                            <span class="region-feed-category" style="background:${catColor}18;color:${catColor};border:1px solid ${catColor}40;">${cat}</span>
                             <span>${formatarTempo(item.timestamp)}</span>
                         </div>
                         <div class="region-feed-text">${formatMessage(item.message || '')}</div>
-                    </div>
-                `).join('')
+                        ${urgLabel ? `<div class="region-feed-urgency" style="color:${urgDot};"><span style="width:6px;height:6px;border-radius:50%;background:${urgDot};"></span> ${urgLabel}</div>` : ''}
+                    </div>`;
+                }).join('')
                 : '<p style="color:var(--text-muted);font-size:0.84rem;">Ainda não há chamados registrados nessa região.</p>';
 
             document.getElementById('region-modal-body').innerHTML = `
@@ -3779,22 +3931,38 @@
                 </div>
                 <div class="region-modal-layout">
                     <div class="region-modal-kpis">
-                        <div class="region-kpi"><div class="region-kpi-label">Demandas</div><div class="region-kpi-value">${summary.total}</div></div>
-                        <div class="region-kpi"><div class="region-kpi-label">Críticas + urgentes</div><div class="region-kpi-value">${summary.critical + summary.urgent}</div></div>
-                        <div class="region-kpi"><div class="region-kpi-label">Resolução</div><div class="region-kpi-value">${summary.resolvedPct}%</div></div>
-                        <div class="region-kpi"><div class="region-kpi-label">Humor</div><div class="region-kpi-value">${summary.satisfaction}%</div></div>
+                        <div class="region-kpi kpi-demandas">
+                            <div class="region-kpi-icon"><i class="ri-file-list-3-line"></i></div>
+                            <div class="region-kpi-label">Demandas</div>
+                            <div class="region-kpi-value">${summary.total}</div>
+                        </div>
+                        <div class="region-kpi kpi-criticas">
+                            <div class="region-kpi-icon"><i class="ri-alert-line"></i></div>
+                            <div class="region-kpi-label">Críticas + Urgentes</div>
+                            <div class="region-kpi-value">${summary.critical + summary.urgent}</div>
+                        </div>
+                        <div class="region-kpi kpi-resolucao">
+                            <div class="region-kpi-icon"><i class="ri-checkbox-circle-line"></i></div>
+                            <div class="region-kpi-label">Resolução</div>
+                            <div class="region-kpi-value">${summary.resolvedPct}%</div>
+                        </div>
+                        <div class="region-kpi kpi-humor">
+                            <div class="region-kpi-icon"><i class="ri-emotion-line"></i></div>
+                            <div class="region-kpi-label">Humor</div>
+                            <div class="region-kpi-value">${summary.satisfaction}%</div>
+                        </div>
                     </div>
                     <div class="region-modal-panels">
                         <div class="region-panel">
-                            <h3>Últimas demandas</h3>
+                            <h3><i class="ri-time-line" style="color:#34d399;"></i> Últimas demandas</h3>
                             ${latestHtml}
                         </div>
                         <div class="region-panel">
-                            <h3>Categorias que mais pressionam</h3>
+                            <h3><i class="ri-fire-line" style="color:#f87171;"></i> Categorias que mais pressionam</h3>
                             ${topCategoriesHtml}
-                            <div style="margin-top:16px; padding-top:16px; border-top:1px solid var(--border);">
+                            <div class="region-dominante">
                                 <div class="region-kpi-label">Categoria dominante</div>
-                                <div class="region-kpi-value" style="font-size:1.1rem;">${summary.topCategory}</div>
+                                <div class="region-dominante-value"><i class="ri-fire-fill"></i> ${summary.topCategory}</div>
                             </div>
                         </div>
                     </div>
@@ -3825,30 +3993,30 @@
                 rGrid.innerHTML += `
                     <div class="manage-card region-card" onclick="openRegionModal('${r.name.replace(/'/g, "\\'")}')">
                         <div class="region-card-header">
-                            <div class="region-card-title">${r.name}</div>
+                            <div class="region-card-title"><i class="ri-map-pin-2-fill" style="color:#34d399;"></i> ${r.name}</div>
                             <span class="region-chip"><i class="ri-map-pin-line"></i> ${summary.total}</span>
                         </div>
                         <div class="region-kpis">
-                            <div class="region-kpi">
+                            <div class="region-kpi kpi-criticas">
                                 <div class="region-kpi-label">Críticas</div>
                                 <div class="region-kpi-value">${summary.critical + summary.urgent}</div>
                             </div>
-                            <div class="region-kpi">
+                            <div class="region-kpi kpi-resolucao">
                                 <div class="region-kpi-label">Resolução</div>
                                 <div class="region-kpi-value">${summary.resolvedPct}%</div>
                             </div>
-                            <div class="region-kpi">
+                            <div class="region-kpi kpi-humor">
                                 <div class="region-kpi-label">Humor</div>
                                 <div class="region-kpi-value">${summary.satisfaction}%</div>
                             </div>
-                            <div class="region-kpi">
+                            <div class="region-kpi kpi-demandas">
                                 <div class="region-kpi-label">Foco</div>
-                                <div class="region-kpi-value" style="font-size:0.92rem;">${summary.topCategory}</div>
+                                <div class="region-kpi-value" style="font-size:0.88rem;font-weight:700;">${summary.topCategory}</div>
                             </div>
                         </div>
                         <div class="region-card-footer">
                             <div class="region-card-note">Clique para abrir os chamados e indicadores detalhados da região.</div>
-                            <div class="region-action"><i class="ri-arrow-right-line"></i> Analisar</div>
+                            <div class="region-action"><span>Analisar</span> <i class="ri-arrow-right-line"></i></div>
                         </div>
                         <div class="btn-delete" onclick="event.stopPropagation(); delItem('regions', '${r.name.replace(/'/g, "\\'")}')">Excluir</div>
                     </div>

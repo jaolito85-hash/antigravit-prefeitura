@@ -2123,8 +2123,15 @@ Regras:
 
 # Rate Limiter: max messages per sender in a time window
 rate_limit_store = defaultdict(list)  # {remoteJid: [timestamps]}
-RATE_LIMIT_MAX = 20       # max messages por janela (conversas multi-turno são normais)
+RATE_LIMIT_MAX = 10       # max messages por janela
 RATE_LIMIT_WINDOW = 600   # 10 minutes (in seconds)
+
+# Burst limit: trava o bot se a pessoa mandar várias msgs rápidas sem esperar resposta
+burst_limit_store = defaultdict(list)  # {remoteJid: [timestamps]}
+BURST_LIMIT_MAX = 3        # máx 3 mensagens em janela curta
+BURST_LIMIT_WINDOW = 30    # 30 segundos
+BURST_COOLDOWN = 60        # cooldown de 60s após estourar o burst
+burst_cooldown_until = {}  # {remoteJid: timestamp_até_quando_bloqueado}
 
 # Limite diário: max mensagens por número por dia
 daily_limit_store = defaultdict(list)  # {remoteJid: [timestamps]}
@@ -2138,6 +2145,31 @@ MAX_MESSAGE_LENGTH = 600  # ~10 linhas de texto
 protocol_query_store = defaultdict(list)  # {remoteJid: [timestamps]}
 PROTOCOL_QUERY_MAX = 3
 PROTOCOL_QUERY_WINDOW = 3600  # 1 hora
+
+
+def is_burst_limited(remote_jid):
+    """Trava o bot se a pessoa mandar msgs rápidas demais sem esperar resposta.
+
+    3 msgs em 30s = cooldown de 60s. Durante o cooldown, ignora silenciosamente
+    (sem responder, para não alimentar o comportamento).
+    """
+    now = time_now()
+    # Se está em cooldown ativo, verifica se já expirou
+    if remote_jid in burst_cooldown_until:
+        if now < burst_cooldown_until[remote_jid]:
+            print(f"[BURST] {mascarar_telefone(remote_jid)} em cooldown (faltam {int(burst_cooldown_until[remote_jid] - now)}s)")
+            return True
+        else:
+            del burst_cooldown_until[remote_jid]
+    # Limpa timestamps fora da janela
+    burst_limit_store[remote_jid] = [t for t in burst_limit_store[remote_jid] if now - t < BURST_LIMIT_WINDOW]
+    if len(burst_limit_store[remote_jid]) >= BURST_LIMIT_MAX:
+        # Ativou o burst — entra em cooldown
+        burst_cooldown_until[remote_jid] = now + BURST_COOLDOWN
+        print(f"[BURST] {mascarar_telefone(remote_jid)} estourou burst ({BURST_LIMIT_MAX} msgs em {BURST_LIMIT_WINDOW}s) — cooldown {BURST_COOLDOWN}s")
+        return True
+    burst_limit_store[remote_jid].append(now)
+    return False
 
 
 def is_rate_limited(remote_jid):
@@ -3465,6 +3497,15 @@ def webhook(event_type=None):
                     )
                     send_whatsapp_message(remote_jid, moderation["reply"])
                     return jsonify({"status": moderation["status"]}), 200
+                if is_burst_limited(remote_jid):
+                    # Primeira vez que estoura: avisa. Msgs seguintes no cooldown: silêncio total.
+                    if remote_jid in burst_cooldown_until and (burst_cooldown_until[remote_jid] - time_now()) > (BURST_COOLDOWN - 2):
+                        send_whatsapp_message(
+                            remote_jid,
+                            "Você está enviando mensagens rápido demais. "
+                            "Aguarde 1 minuto antes de enviar a próxima."
+                        )
+                    return jsonify({"status": "burst_limited"}), 200
                 if is_rate_limited(remote_jid):
                     print(f"[RATE-LIMIT] {mascarar_telefone(remote_jid)} exceeded {RATE_LIMIT_MAX} msgs in {RATE_LIMIT_WINDOW}s")
                     send_whatsapp_message(remote_jid, "Recebi muitas mensagens em seguida. Aguarde um momento e tente novamente.")
