@@ -3288,14 +3288,11 @@ def append_to_feedback(feedback_id, old_message, new_content, new_region=None, n
 def webhook(event_type=None):
     print(f"[WEBHOOK] Requisicao recebida! Path: /webhook/{event_type or ''} IP: {request.remote_addr}")
     # Validação de origem do webhook
-    if not WEBHOOK_SECRET:
-        print("[WEBHOOK] REJEITADO: WEBHOOK_SECRET nao configurado — todas as requests bloqueadas por seguranca")
-        return jsonify({"error": "webhook_secret_not_configured"}), 503
-
-    incoming_secret = request.headers.get("X-Webhook-Secret") or request.headers.get("apikey") or ""
-    if incoming_secret != WEBHOOK_SECRET:
-        print(f"[WEBHOOK] REJEITADO: secret invalido (recebido={incoming_secret[:4] + '...' if incoming_secret else 'VAZIO'})")
-        return jsonify({"error": "unauthorized"}), 401
+    if WEBHOOK_SECRET:
+        incoming_secret = request.headers.get("X-Webhook-Secret") or request.headers.get("apikey") or ""
+        if incoming_secret != WEBHOOK_SECRET:
+            print(f"[WEBHOOK] REJEITADO: secret invalido")
+            return jsonify({"error": "unauthorized"}), 401
 
     try:
         data = request.json
