@@ -396,31 +396,53 @@
             transform: translateY(-1px);
         }
 
-        /* Thread Modal */
+        /* Thread Modal — Glassmorphism Design */
         .modal-overlay {
             position: fixed;
             top: 0;
             left: 0;
             right: 0;
             bottom: 0;
-            background: rgba(0, 0, 0, 0.7);
+            background: rgba(0, 0, 0, 0.6);
             z-index: 9998;
             display: flex;
             align-items: center;
             justify-content: center;
-            backdrop-filter: blur(4px);
+            -webkit-backdrop-filter: blur(20px);
+            backdrop-filter: blur(20px);
         }
 
         .modal-thread-box {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 16px;
+            background: rgba(20, 20, 35, 0.85);
+            -webkit-backdrop-filter: blur(20px);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 24px;
             width: 94%;
-            max-width: 640px;
+            max-width: 520px;
             max-height: 88vh;
             overflow-y: auto;
             padding: 28px;
-            animation: slideIn 0.25s ease-out;
+            animation: modalFadeIn 0.3s ease-out;
+            box-shadow:
+                0 0 0 1px rgba(255, 255, 255, 0.05),
+                0 8px 40px rgba(0, 0, 0, 0.5),
+                0 20px 60px rgba(99, 102, 241, 0.08),
+                inset 0 1px 0 rgba(255, 255, 255, 0.05);
+        }
+
+        .modal-thread-box::-webkit-scrollbar {
+            width: 6px;
+        }
+        .modal-thread-box::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .modal-thread-box::-webkit-scrollbar-thumb {
+            background: rgba(99, 102, 241, 0.3);
+            border-radius: 3px;
+        }
+        .modal-thread-box::-webkit-scrollbar-thumb:hover {
+            background: rgba(99, 102, 241, 0.5);
         }
 
         .thread-header {
@@ -429,54 +451,94 @@
             justify-content: space-between;
             margin-bottom: 20px;
             gap: 12px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        }
+
+        .thread-header > button {
+            width: 36px;
+            height: 36px;
+            border-radius: 50% !important;
+            background: rgba(255, 255, 255, 0.06) !important;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease !important;
+            flex-shrink: 0;
+        }
+        .thread-header > button:hover {
+            background: rgba(255, 255, 255, 0.12) !important;
+            transform: rotate(90deg);
         }
 
         .thread-sender {
             font-size: 0.82rem;
             color: var(--text-muted);
-            margin-top: 4px;
+            margin-top: 6px;
             display: flex;
             align-items: center;
             gap: 8px;
+            flex-wrap: wrap;
         }
 
         .thread-timeline {
             display: flex;
             flex-direction: column;
-            gap: 12px;
+            gap: 14px;
             margin: 16px 0;
+            max-height: 50vh;
+            overflow-y: auto;
+            padding-right: 4px;
+        }
+        .thread-timeline::-webkit-scrollbar {
+            width: 4px;
+        }
+        .thread-timeline::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .thread-timeline::-webkit-scrollbar-thumb {
+            background: rgba(99, 102, 241, 0.25);
+            border-radius: 2px;
         }
 
         .thread-item {
             display: flex;
             width: 100%;
+            animation: msgSlideIn 0.35s ease-out both;
         }
 
         .thread-item.client {
             justify-content: flex-start;
+            --msg-direction: -1;
         }
 
         .thread-item.agent {
             justify-content: flex-end;
+            --msg-direction: 1;
         }
 
         .chat-bubble {
-            width: min(84%, 420px);
+            width: min(84%, 400px);
             border-radius: 18px;
             padding: 14px 16px;
-            border: 1px solid var(--border);
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
+            border: 1px solid transparent;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        .chat-bubble:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 6px 24px rgba(0, 0, 0, 0.2);
         }
 
         .thread-item.client .chat-bubble {
-            background: #111827;
-            border-color: rgba(75, 85, 99, 0.55);
+            background: rgba(99, 102, 241, 0.12);
+            border-color: rgba(99, 102, 241, 0.18);
             border-bottom-left-radius: 6px;
         }
 
         .thread-item.agent .chat-bubble {
-            background: linear-gradient(135deg, rgba(5, 150, 105, 0.22), rgba(6, 95, 70, 0.3));
-            border-color: rgba(52, 211, 153, 0.3);
+            background: rgba(16, 185, 129, 0.12);
+            border-color: rgba(16, 185, 129, 0.15);
             border-bottom-right-radius: 6px;
         }
 
@@ -489,14 +551,14 @@
         }
 
         .chat-role {
-            font-size: 0.72rem;
+            font-size: 0.7rem;
             font-weight: 700;
             text-transform: uppercase;
-            letter-spacing: 0.08em;
+            letter-spacing: 0.1em;
         }
 
         .thread-item.client .chat-role {
-            color: #cbd5e1;
+            color: #a5b4fc;
         }
 
         .thread-item.agent .chat-role {
@@ -505,132 +567,174 @@
 
         .thread-item.operator {
             justify-content: flex-end;
+            --msg-direction: 1;
         }
 
         .thread-item.operator .chat-bubble {
-            background: linear-gradient(135deg, rgba(99, 102, 241, 0.22), rgba(67, 56, 202, 0.3));
-            border-color: rgba(129, 140, 248, 0.3);
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.18), rgba(139, 92, 246, 0.18));
+            border-color: rgba(129, 140, 248, 0.25);
             border-bottom-right-radius: 6px;
         }
 
         .thread-item.operator .chat-role {
-            color: #a5b4fc;
+            color: #c4b5fd;
         }
 
         .handoff-banner {
             display: flex;
             align-items: center;
             gap: 8px;
-            padding: 10px 14px;
-            margin-bottom: 12px;
-            border-radius: 8px;
+            padding: 12px 16px;
+            margin-bottom: 14px;
+            border-radius: 14px;
             font-size: 0.82rem;
             font-weight: 600;
+            animation: msgSlideIn 0.3s ease-out;
         }
 
         .handoff-banner.active {
-            background: rgba(99, 102, 241, 0.12);
-            border: 1px solid rgba(129, 140, 248, 0.3);
+            background: rgba(99, 102, 241, 0.1);
+            border: 1px solid rgba(129, 140, 248, 0.2);
             color: #a5b4fc;
         }
 
         .handoff-banner.inactive {
-            background: rgba(5, 150, 105, 0.08);
-            border: 1px solid rgba(52, 211, 153, 0.2);
+            background: rgba(5, 150, 105, 0.06);
+            border: 1px solid rgba(52, 211, 153, 0.15);
             color: #6ee7b7;
         }
 
         .handoff-btn {
-            padding: 8px 16px;
-            border-radius: 8px;
+            padding: 10px 20px;
+            border-radius: 12px;
             cursor: pointer;
             font-size: 0.82rem;
             font-weight: 600;
             display: flex;
             align-items: center;
             gap: 6px;
-            transition: all 0.2s;
+            transition: all 0.25s ease;
+            position: relative;
+            overflow: hidden;
         }
 
         .handoff-btn.assume {
-            background: rgba(99, 102, 241, 0.15);
-            color: #a5b4fc;
-            border: 1px solid rgba(129, 140, 248, 0.4);
+            background: linear-gradient(135deg, #6366f1, #8b5cf6, #a855f7);
+            color: #fff;
+            border: none;
+            box-shadow: 0 4px 15px rgba(99, 102, 241, 0.3);
         }
 
         .handoff-btn.assume:hover {
-            background: rgba(99, 102, 241, 0.3);
+            transform: scale(1.03);
+            box-shadow: 0 6px 25px rgba(99, 102, 241, 0.45);
+        }
+
+        .handoff-btn.assume::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.15), transparent);
+            animation: btnShimmer 3s infinite;
         }
 
         .handoff-btn.release {
-            background: rgba(5, 150, 105, 0.12);
+            background: rgba(16, 185, 129, 0.1);
             color: #6ee7b7;
-            border: 1px solid rgba(52, 211, 153, 0.3);
+            border: 1px solid rgba(52, 211, 153, 0.25);
         }
 
         .handoff-btn.release:hover {
-            background: rgba(5, 150, 105, 0.25);
+            background: rgba(16, 185, 129, 0.2);
+            transform: scale(1.03);
         }
 
         .reply-box {
             display: flex;
-            gap: 8px;
-            margin-top: 12px;
-            padding-top: 12px;
-            border-top: 1px solid var(--border);
+            gap: 10px;
+            margin-top: 14px;
+            padding-top: 14px;
+            border-top: 1px solid rgba(255, 255, 255, 0.06);
+            align-items: flex-end;
         }
 
         .reply-input {
             flex: 1;
-            background: #111827;
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            padding: 10px 14px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 16px;
+            padding: 12px 16px;
             color: #d1d5db;
             font-size: 0.88rem;
+            font-family: 'Inter', sans-serif;
             resize: none;
             outline: none;
-            min-height: 42px;
+            min-height: 44px;
             max-height: 100px;
+            transition: border-color 0.25s ease, box-shadow 0.25s ease;
         }
 
         .reply-input:focus {
-            border-color: rgba(129, 140, 248, 0.5);
+            border-color: rgba(99, 102, 241, 0.5);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
         }
 
         .reply-input::placeholder {
-            color: #6b7280;
+            color: #4b5563;
         }
 
         .reply-send-btn {
-            background: linear-gradient(135deg, #6366f1, #4338ca);
+            background: linear-gradient(135deg, #6366f1, #8b5cf6, #a855f7);
             color: white;
             border: none;
-            border-radius: 10px;
-            padding: 10px 16px;
+            border-radius: 14px;
+            padding: 12px 18px;
             cursor: pointer;
             font-size: 0.88rem;
             font-weight: 600;
             display: flex;
             align-items: center;
             gap: 6px;
-            transition: opacity 0.2s;
+            transition: all 0.25s ease;
+            box-shadow: 0 4px 15px rgba(99, 102, 241, 0.25);
+            position: relative;
+            overflow: hidden;
         }
 
         .reply-send-btn:hover {
-            opacity: 0.85;
+            transform: scale(1.04);
+            box-shadow: 0 6px 25px rgba(99, 102, 241, 0.4);
+        }
+
+        .reply-send-btn::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.12), transparent);
+            animation: btnShimmer 3s infinite;
         }
 
         .reply-send-btn:disabled {
-            opacity: 0.4;
+            opacity: 0.35;
             cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        .reply-send-btn:disabled::after {
+            animation: none;
         }
 
         .resolve-panel {
-            border-top: 1px solid var(--border);
+            border-top: 1px solid rgba(255, 255, 255, 0.06);
             margin-top: 16px;
             padding-top: 16px;
-            animation: slideIn 0.25s ease-out;
+            animation: msgSlideIn 0.3s ease-out;
         }
 
         .resolve-panel-header {
@@ -645,22 +749,25 @@
 
         .resolve-textarea {
             width: 100%;
-            background: #111827;
-            border: 1px solid rgba(16, 185, 129, 0.3);
-            border-radius: 10px;
-            padding: 12px 14px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+            border-radius: 14px;
+            padding: 12px 16px;
             color: #d1d5db;
             font-size: 0.88rem;
+            font-family: 'Inter', sans-serif;
             resize: vertical;
             outline: none;
             min-height: 80px;
             max-height: 200px;
             line-height: 1.5;
             box-sizing: border-box;
+            transition: border-color 0.25s ease, box-shadow 0.25s ease;
         }
 
         .resolve-textarea:focus {
-            border-color: rgba(16, 185, 129, 0.6);
+            border-color: rgba(16, 185, 129, 0.5);
+            box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.08);
         }
 
         .resolve-actions {
@@ -672,39 +779,42 @@
 
         .resolve-btn {
             padding: 10px 18px;
-            border-radius: 8px;
+            border-radius: 12px;
             cursor: pointer;
             font-size: 0.82rem;
             font-weight: 600;
             display: flex;
             align-items: center;
             gap: 6px;
-            transition: all 0.2s;
+            transition: all 0.25s ease;
             border: none;
         }
 
         .resolve-btn.primary {
             background: linear-gradient(135deg, #059669, #047857);
             color: white;
+            box-shadow: 0 4px 12px rgba(5, 150, 105, 0.25);
         }
 
         .resolve-btn.primary:hover {
-            opacity: 0.85;
+            transform: scale(1.03);
+            box-shadow: 0 6px 20px rgba(5, 150, 105, 0.35);
         }
 
         .resolve-btn.secondary {
-            background: transparent;
+            background: rgba(255, 255, 255, 0.04);
             color: var(--text-muted);
-            border: 1px solid var(--border);
+            border: 1px solid rgba(255, 255, 255, 0.08);
         }
 
         .resolve-btn.secondary:hover {
-            background: var(--bg-hover);
+            background: rgba(255, 255, 255, 0.08);
         }
 
         .resolve-btn:disabled {
-            opacity: 0.4;
+            opacity: 0.35;
             cursor: not-allowed;
+            transform: none;
         }
 
         .resolve-loading {
@@ -717,15 +827,16 @@
         }
 
         .chat-time {
-            font-size: 0.72rem;
-            color: var(--text-muted);
+            font-size: 0.68rem;
+            color: #6b7280;
             white-space: nowrap;
+            font-weight: 500;
         }
 
         .chat-text {
-            font-size: 0.9rem;
-            color: #d1d5db;
-            line-height: 1.5;
+            font-size: 0.88rem;
+            color: #e2e8f0;
+            line-height: 1.55;
             word-break: break-word;
         }
 
@@ -736,8 +847,8 @@
             flex-wrap: wrap;
             gap: 10px;
             padding-top: 16px;
-            margin-top: 8px;
-            border-top: 1px solid var(--border);
+            margin-top: 10px;
+            border-top: 1px solid rgba(255, 255, 255, 0.06);
         }
 
         .whatsapp-contact-btn {
@@ -1483,6 +1594,43 @@
             }
         }
 
+        @keyframes modalFadeIn {
+            from {
+                opacity: 0;
+                transform: scale(0.95) translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: scale(1) translateY(0);
+            }
+        }
+
+        @keyframes msgSlideIn {
+            from {
+                opacity: 0;
+                transform: translateX(calc(12px * var(--msg-direction, -1)));
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        @keyframes btnShimmer {
+            0% { transform: translateX(-100%); }
+            50% { transform: translateX(200%); }
+            100% { transform: translateX(200%); }
+        }
+
+        @keyframes statusPulse {
+            0%, 100% {
+                box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.5);
+            }
+            50% {
+                box-shadow: 0 0 0 5px rgba(16, 185, 129, 0);
+            }
+        }
+
         @keyframes pulse {
 
             0%,
@@ -1523,14 +1671,14 @@
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            width: 30px;
-            height: 30px;
+            width: 32px;
+            height: 32px;
             border-radius: 50%;
-            background: #25D36620;
+            background: rgba(37, 211, 102, 0.1);
             color: #25D366;
-            border: 1px solid #25D366;
+            border: 1px solid rgba(37, 211, 102, 0.3);
             cursor: pointer;
-            transition: all 0.2s ease;
+            transition: all 0.25s ease;
             text-decoration: none;
             font-size: 0.85rem;
         }
@@ -1538,8 +1686,8 @@
         .whatsapp-contact-btn:hover {
             background: #25D366;
             color: #fff;
-            transform: scale(1.1);
-            box-shadow: 0 0 12px #25D36650;
+            transform: scale(1.12);
+            box-shadow: 0 0 16px rgba(37, 211, 102, 0.4);
         }
 
         .export-menu {
@@ -1775,6 +1923,39 @@
             /* Top problems horizontal scroll */
             #top-problems-list {
                 flex-direction: column !important;
+            }
+
+            /* Modal — bottom sheet on mobile */
+            .modal-overlay {
+                align-items: flex-end;
+            }
+
+            .modal-thread-box {
+                width: 100%;
+                max-width: 100%;
+                max-height: 92vh;
+                border-radius: 20px 20px 0 0;
+                padding: 20px;
+                animation: mobileSlideUp 0.35s ease-out;
+            }
+
+            .chat-bubble {
+                width: min(90%, 420px);
+            }
+
+            .thread-timeline {
+                max-height: 45vh;
+            }
+        }
+
+        @keyframes mobileSlideUp {
+            from {
+                opacity: 0;
+                transform: translateY(100%);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
             }
         }
 
