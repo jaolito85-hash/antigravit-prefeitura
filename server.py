@@ -184,8 +184,9 @@ def transcribe_audio(audio_content):
         audio_file.name = "audio.ogg"
         
         transcript = client.audio.transcriptions.create(
-            model="whisper-1", 
+            model="whisper-1",
             file=audio_file,
+            timeout=15,
         )
         return transcript.text
     except Exception as e:
@@ -1334,7 +1335,8 @@ Regras de categoria:
                 {"role": "user", "content": prompt}
             ],
             max_tokens=100,
-            temperature=0  # Determinístico
+            temperature=0,  # Determinístico
+            timeout=15
         )
         
         result_text = response.choices[0].message.content.strip()
@@ -1446,7 +1448,8 @@ TIPO DE MENSAGEM — IDENTIFIQUE E ADAPTE SUA RESPOSTA:
                 {"role": "user", "content": text}
             ],
             max_tokens=200,
-            temperature=0.5
+            temperature=0.5,
+            timeout=15
         )
 
         return response.choices[0].message.content.strip()
@@ -1534,7 +1537,8 @@ Seja MUITO conciso, máximo 150 caracteres.'''
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=100,
-            temperature=0.7
+            temperature=0.7,
+            timeout=15
         )
         
         summary = response.choices[0].message.content.strip()
@@ -1697,7 +1701,8 @@ Regras:
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=900,
-            temperature=0.3
+            temperature=0.3,
+            timeout=15
         )
         result_text = response.choices[0].message.content.strip()
         if result_text.startswith('```'):
@@ -2105,7 +2110,8 @@ Regras:
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=800,
-            temperature=0.3
+            temperature=0.3,
+            timeout=15
         )
         result_text = response.choices[0].message.content.strip()
         if result_text.startswith('```'):
@@ -3980,7 +3986,8 @@ REGRAS:
                 {"role": "user", "content": prompt}
             ],
             max_tokens=200,
-            temperature=0.4
+            temperature=0.4,
+            timeout=15
         )
         draft = resp.choices[0].message.content.strip()
     except Exception as e:
