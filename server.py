@@ -4,6 +4,7 @@ import json
 import hashlib
 import csv
 import re
+import threading
 from io import StringIO
 from flask import Flask, request, jsonify, render_template, redirect, url_for, session
 from functools import wraps
@@ -24,8 +25,8 @@ app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 # Webhook Secret (Evolution API deve enviar este header)
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
 if not WEBHOOK_SECRET:
-    print("[SEGURANCA] AVISO CRITICO: WEBHOOK_SECRET nao configurado! Webhook rejeitara TODAS as requisicoes.")
-    print("[SEGURANCA] Configure WEBHOOK_SECRET no .env para aceitar mensagens.")
+    print("[SEGURANCA] AVISO: WEBHOOK_SECRET nao configurado — webhook aceitara qualquer request.")
+    print("[SEGURANCA] Configure WEBHOOK_SECRET no .env para validar a origem das requisicoes.")
 
 # Config
 EVOLUTION_API_URL = os.getenv("EVOLUTION_API_URL")
@@ -36,37 +37,44 @@ EVOLUTION_INSTANCE_NAME = os.getenv("EVOLUTION_INSTANCE_NAME")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-# Initialize Supabase client (if configured)
-supabase = None
-if SUPABASE_URL and SUPABASE_KEY:
-    try:
-        from supabase import create_client, Client
-        supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-        print("✅ Supabase connected!")
-    except Exception as e:
-        print(f"⚠️ Supabase connection failed: {e}")
-        supabase = None
+# Cliente Supabase — um por thread. Compartilhar entre threads corrompe o
+# estado HTTP/2 do httpx (erros StreamInputs.SEND_HEADERS / ConnectionState.CLOSED).
+_sb_local = threading.local()
+_sb_lock = threading.Lock()  # protege logs/criação concorrente
+
+def _create_supabase_client():
+    from supabase import create_client
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def get_supabase():
-    """Returns a working Supabase client, reconnecting if needed."""
-    global supabase
+    """Retorna um cliente Supabase exclusivo da thread atual."""
     if not SUPABASE_URL or not SUPABASE_KEY:
         return None
-    if supabase is None:
-        try:
-            from supabase import create_client, Client
-            supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-            print("🔄 Supabase reconnected!")
-        except Exception as e:
-            print(f"⚠️ Supabase reconnection failed: {e}")
-            return None
-    return supabase
+    client = getattr(_sb_local, 'client', None)
+    if client is not None:
+        return client
+    try:
+        client = _create_supabase_client()
+        _sb_local.client = client
+        with _sb_lock:
+            print(f"[SUPABASE] Cliente criado para thread {threading.current_thread().name}")
+        return client
+    except Exception as e:
+        with _sb_lock:
+            print(f"[SUPABASE] Erro ao criar cliente: {e}")
+        return None
 
 def _reconnect_supabase():
-    """Force reconnect Supabase client."""
-    global supabase
-    supabase = None
+    """Recria o cliente da thread atual (usado apos erro de conexao)."""
+    _sb_local.client = None
     return get_supabase()
+
+# Startup: valida que consegue criar um cliente (na thread principal)
+if SUPABASE_URL and SUPABASE_KEY:
+    if get_supabase():
+        print("✅ Supabase connected!")
+    else:
+        print("⚠️ Supabase connection failed — sistema rodara com fallback JSON local")
 
 # Fallback to local JSON if Supabase not configured
 EVENTS_FILE = 'execution/events.json'
@@ -510,8 +518,13 @@ def verificar_consentimento_webhook(remote_jid: str, push_name: str, text: str) 
             )
             return {"status": "consent_pending", "handled": True}
 
-    # Cidadão novo → registrar e enviar boas-vindas
-    registrar_cidadao(remote_jid, push_name, consentimento=False)
+    # Cidadão novo → registrar e enviar boas-vindas.
+    # Se o registro falhar (RLS, Supabase off, etc), NAO envia boas-vindas —
+    # senao cada mensagem nova dispara boas-vindas de novo (loop infinito).
+    registrado = registrar_cidadao(remote_jid, push_name, consentimento=False)
+    if not registrado:
+        print(f"[ERRO-CRITICO] Falha ao registrar cidadao {mascarar_telefone(remote_jid)} — boas-vindas NAO enviada para evitar loop. Verifique RLS/credenciais do Supabase.")
+        return {"status": "consent_registration_failed", "handled": True}
     send_whatsapp_message(remote_jid, MENSAGEM_BOAS_VINDAS)
     return {"status": "consent_requested", "handled": True}
 
@@ -3393,8 +3406,8 @@ def webhook(event_type=None):
                     save_moderation_state(state)
                     send_whatsapp_message(remote_jid, "Seu acesso foi suspenso por 72 horas devido ao conteúdo da mensagem.")
                     return jsonify({"status": "blocked_sexual_handoff"}), 200
-                if is_burst_limited(remote_jid):
-                    return jsonify({"status": "burst_limited_handoff"}), 200
+                # NOTA: burst_limit eh verificado mais abaixo no fluxo normal.
+                # Chamar aqui tambem causava dupla contagem (cada msg era contada 2x).
 
                 try:
                     _handoff_fb = get_active_feedback(remote_jid)
