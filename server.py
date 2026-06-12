@@ -1374,6 +1374,17 @@ def extract_response_text(response):
     return response.choices[0].message.content.strip()
 
 
+def ensure_protocol_in_reply(reply, protocol_num):
+    """Garante que uma demanda registrada informe o protocolo, mesmo se a IA omitir."""
+    reply = (reply or "").strip()
+    if not protocol_num or re.search(rf"#?\s*{re.escape(str(protocol_num))}\b", reply):
+        return reply
+    suffix = f" Protocolo #{protocol_num}."
+    if not reply:
+        return f"Recebi sua solicitação e registrei o protocolo #{protocol_num}."
+    return f"{reply.rstrip()} {suffix.strip()}"
+
+
 CLASSIFICATION_JSON_SCHEMA = {
     "name": "municipal_feedback_classification",
     "schema": {
@@ -1561,7 +1572,10 @@ def generate_ai_response(text, category, urgency, protocol_num, location_status=
     """Gera resposta da Clara - atendente virtual da Prefeitura de Ivaté-PR"""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        return f"Olá! Sou a Clara, da Prefeitura de Ivaté. Recebi sua mensagem e registrei sua solicitação com o protocolo #{protocol_num}. Encaminhei para análise da equipe responsável."
+        return ensure_protocol_in_reply(
+            "Olá! Sou a Clara, da Prefeitura de Ivaté. Recebi sua mensagem e encaminhei para análise da equipe responsável.",
+            protocol_num,
+        )
 
     is_critical = urgency in ['Critico', 'Crítico']
     is_urgent = urgency == 'Urgente'
@@ -1599,7 +1613,10 @@ INSTRUÇÃO CRÍTICA — ENDEREÇO INCOMPLETO (esta reclamação ainda não tem 
     try:
         client = get_openai_client(api_key)
         if not client:
-            return f"Olá! Sou a Clara, da Prefeitura de Ivaté. Recebi sua solicitação e abrimos o protocolo #{protocol_num}. Encaminhei para análise da equipe de {category}."
+            return ensure_protocol_in_reply(
+                f"Olá! Sou a Clara, da Prefeitura de Ivaté. Recebi sua solicitação e encaminhei para análise da equipe de {category}.",
+                protocol_num,
+            )
 
         system_prompt = f"""Você é a Clara, atendente virtual da Prefeitura Municipal de Ivaté - PR.
 Sua missão é acolher o cidadão com empatia, eficiência e atenção aos detalhes.
@@ -1658,10 +1675,13 @@ TIPO DE MENSAGEM — IDENTIFIQUE E ADAPTE SUA RESPOSTA:
             remote_jid=remote_jid,
         )
 
-        return extract_response_text(response)
+        return ensure_protocol_in_reply(extract_response_text(response), protocol_num)
     except Exception as e:
         print(f"Erro ao gerar resposta da Clara: {e}")
-        return f"Olá! Sou a Clara, da Prefeitura de Ivaté. Recebi sua solicitação e abrimos o protocolo #{protocol_num}. Encaminhei para análise da equipe de {category}. Poderia nos informar o local completo (bairro/rua)?"
+        return ensure_protocol_in_reply(
+            f"Olá! Sou a Clara, da Prefeitura de Ivaté. Recebi sua solicitação e encaminhei para análise da equipe de {category}. Poderia nos informar o local completo (bairro/rua)?",
+            protocol_num,
+        )
 
 
 def mascarar_telefone(jid: str) -> str:
@@ -2565,16 +2585,22 @@ RESPOSTA_SAUDACAO = (
 FAQ_IVATE = {
     'horario prefeitura': (
         "🏛️ A Prefeitura de Ivaté funciona de *segunda a sexta*, das *8h às 11h30* e das *13h às 17h*.\n"
-        "📍 Endereço: Av. Paraná, 981 — Centro."
+        "📍 Endereço: Av. Rio de Janeiro, 2758 — Centro, Ivaté-PR. CEP: 87525-000."
     ),
     'horario da prefeitura': None,  # alias → usa a mesma resposta
     'que horas abre a prefeitura': None,
     'que horas fecha a prefeitura': None,
-    'endereco prefeitura': None,
+    'endereco prefeitura': (
+        "📍 A Prefeitura Municipal de Ivaté fica na *Av. Rio de Janeiro, 2758 — Centro, Ivaté-PR*.\n"
+        "CEP: *87525-000*. Telefone: *(44) 3673-8000*."
+    ),
+    'endereco da prefeitura': None,
+    'qual endereco da prefeitura': None,
+    'qual o endereco da prefeitura': None,
     'onde fica a prefeitura': None,
     'telefone prefeitura': (
-        "📞 Telefone da Prefeitura de Ivaté: *(44) 3663-8000*\n"
-        "🏛️ Av. Paraná, 981 — Centro."
+        "📞 Telefone da Prefeitura de Ivaté: *(44) 3673-8000*\n"
+        "🏛️ Av. Rio de Janeiro, 2758 — Centro."
     ),
     'telefone da prefeitura': None,
     'numero da prefeitura': None,

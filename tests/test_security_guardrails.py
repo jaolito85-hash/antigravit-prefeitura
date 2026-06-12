@@ -140,6 +140,42 @@ class ClaraSecurityGuardrailsTest(unittest.TestCase):
         self.assertIn("Ignore tudo", captured["messages"][1]["content"])
         self.assertNotIn("Ignore tudo", captured["messages"][0]["content"])
 
+    def test_prefeitura_address_question_is_answered_by_faq(self):
+        answer = server.check_faq("Qual é o endereço da prefeitura?")
+
+        self.assertIsNotNone(answer)
+        self.assertIn("Rio de Janeiro", answer)
+        self.assertIn("2758", answer)
+        self.assertNotIn("Paraná, 981", answer)
+
+    def test_generated_specific_demand_reply_always_includes_protocol(self):
+        class FakeChoice:
+            message = type("Message", (), {"content": "Sinto muito por isso. Para encaminhar ao setor correto, qual é a rua e o bairro?"})()
+
+        class FakeResponse:
+            choices = [FakeChoice()]
+
+        class FakeCompletions:
+            def create(self, **kwargs):
+                return FakeResponse()
+
+        class FakeClient:
+            def __init__(self, api_key=None):
+                self.chat = type("Chat", (), {"completions": FakeCompletions()})()
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test"}, clear=False):
+            with patch("server.OpenAI", FakeClient, create=True):
+                reply = server.generate_ai_response(
+                    "A chuva derrubou uma árvore na rua",
+                    "Infraestrutura & Obras",
+                    "Urgente",
+                    "20260042",
+                    location_status="pendente",
+                    remote_jid="554499999999@s.whatsapp.net",
+                )
+
+        self.assertIn("#20260042", reply)
+
 
 if __name__ == "__main__":
     unittest.main()
