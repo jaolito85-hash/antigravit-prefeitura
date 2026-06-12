@@ -1272,22 +1272,175 @@
             line-height: 1.4;
         }
 
-        .region-modal-layout {
+        /* Modal de região — painel largo com header fixo e corpo rolável */
+        .modal-thread-box.region-modal-box {
+            width: min(1120px, 94vw);
+            max-width: min(1120px, 94vw);
+            max-height: 90vh;
+            padding: 0;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .region-modal-header {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 14px;
+            padding: 22px 28px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+            background: rgba(255, 255, 255, 0.02);
+            flex-shrink: 0;
+        }
+
+        .region-modal-title {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            flex: 1 1 0;
+            min-width: 0;
+        }
+
+        /* Permite que o texto do título quebre linha em vez de estourar o flex */
+        .region-modal-title > div {
+            min-width: 0;
+        }
+
+        .region-modal-title-icon {
+            width: 46px;
+            height: 46px;
+            border-radius: 14px;
+            background: rgba(16, 185, 129, 0.12);
+            border: 1px solid rgba(52, 211, 153, 0.25);
+            color: #34d399;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.4rem;
+            flex-shrink: 0;
+        }
+
+        .region-modal-title h2 {
+            font-size: 1.25rem;
+            font-weight: 800;
+            margin: 0;
+            line-height: 1.2;
+        }
+
+        .region-modal-title p {
+            color: var(--text-muted);
+            font-size: 0.8rem;
+            margin: 3px 0 0;
+        }
+
+        .region-modal-close {
+            width: 38px;
+            height: 38px;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 1.25rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+        }
+
+        .region-modal-close:hover {
+            background: rgba(239, 68, 68, 0.15);
+            color: #f87171;
+            border-color: rgba(239, 68, 68, 0.3);
+        }
+
+        .region-modal-content {
+            padding: 24px 28px 28px;
+            overflow-y: auto;
+            flex: 1 1 auto;
+            min-height: 0;
             display: flex;
             flex-direction: column;
             gap: 20px;
         }
 
+        .region-modal-content::-webkit-scrollbar {
+            width: 6px;
+        }
+        .region-modal-content::-webkit-scrollbar-thumb {
+            background: rgba(99, 102, 241, 0.3);
+            border-radius: 3px;
+        }
+
         .region-modal-kpis {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
-            gap: 12px;
+            gap: 14px;
+        }
+
+        /* No modal largo os KPIs ficam horizontais: ícone à esquerda, texto à direita */
+        .region-modal-kpis .region-kpi {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            padding: 18px 20px;
+        }
+
+        .region-modal-kpis .region-kpi-icon {
+            width: 46px;
+            height: 46px;
+            font-size: 1.35rem;
+            margin-bottom: 0;
+        }
+
+        .region-kpi-text {
+            min-width: 0;
+        }
+
+        .region-modal-kpis .region-kpi-label {
+            margin-bottom: 2px;
+        }
+
+        .region-modal-kpis .region-kpi-value {
+            font-size: 1.7rem;
+            line-height: 1.1;
         }
 
         .region-modal-panels {
             display: grid;
-            grid-template-columns: 1.2fr 0.8fr;
+            grid-template-columns: 1.5fr 1fr;
             gap: 16px;
+            align-items: start;
+        }
+
+        .region-panel-count {
+            margin-left: auto;
+            font-size: 0.7rem;
+            font-weight: 700;
+            color: #6ee7b7;
+            background: rgba(16, 185, 129, 0.12);
+            border: 1px solid rgba(52, 211, 153, 0.25);
+            padding: 2px 10px;
+            border-radius: 999px;
+        }
+
+        .region-feed-list {
+            max-height: 50vh;
+            overflow-y: auto;
+            padding-right: 6px;
+        }
+
+        .region-feed-list::-webkit-scrollbar {
+            width: 5px;
+        }
+        .region-feed-list::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .region-feed-list::-webkit-scrollbar-thumb {
+            background: rgba(99, 102, 241, 0.3);
+            border-radius: 3px;
         }
 
         .region-panel {
@@ -1398,13 +1551,6 @@
             font-size: 0.7rem;
             font-weight: 600;
             margin-top: 8px;
-        }
-
-        .region-modal-actions {
-            display: flex;
-            justify-content: flex-end;
-            gap: 10px;
-            flex-wrap: wrap;
         }
 
         .region-dominante {
@@ -2021,13 +2167,48 @@
                 grid-template-columns: 1fr;
             }
 
-            .region-modal-actions {
-                justify-content: stretch;
+            .modal-thread-box.region-modal-box {
+                width: 100%;
+                max-width: 100%;
+                padding: 0;
+                max-height: 92vh;
+                border-radius: 20px 20px 0 0;
             }
 
-            .region-modal-actions .btn-add {
+            .region-modal-header {
+                padding: 16px 18px;
+                gap: 12px;
+            }
+
+            .region-modal-content {
+                padding: 16px 18px 20px;
+                gap: 16px;
+            }
+
+            /* Botão "Abrir cards" quebra para a segunda linha do header */
+            .region-modal-open-cards {
+                order: 3;
                 width: 100%;
                 justify-content: center;
+            }
+
+            .region-modal-kpis .region-kpi {
+                padding: 14px 16px;
+                gap: 10px;
+            }
+
+            .region-modal-kpis .region-kpi-icon {
+                width: 38px;
+                height: 38px;
+                font-size: 1.1rem;
+            }
+
+            .region-modal-kpis .region-kpi-value {
+                font-size: 1.3rem;
+            }
+
+            .region-feed-list {
+                max-height: 42vh;
             }
 
             .intel-kpis,
@@ -3789,11 +3970,11 @@
 
             const topCategories = Object.entries(categoryCount)
                 .sort((a, b) => b[1] - a[1])
-                .slice(0, 3)
+                .slice(0, 5)
                 .map(([name, count]) => ({ name, count }));
 
             const topCategory = topCategories[0]?.name || 'Sem destaque';
-            const latest = regionEvents.slice(0, 6);
+            const latest = regionEvents.slice(0, 10);
 
             return {
                 regionName,
@@ -3883,7 +4064,7 @@
             const topCategoriesHtml = summary.topCategories.length
                 ? summary.topCategories.map((item, idx) => {
                     const dotColor = catColors[idx % catColors.length];
-                    const barWidth = Math.max(20, (item.count / maxCatCount) * 100);
+                    const barWidth = Math.max(24, (item.count / maxCatCount) * 120);
                     return `
                     <div class="region-breakdown-item">
                         <span><span class="cat-dot" style="background:${dotColor};"></span> ${item.name}</span>
@@ -3921,41 +4102,57 @@
                 }).join('')
                 : '<p style="color:var(--text-muted);font-size:0.84rem;">Ainda não há chamados registrados nessa região.</p>';
 
+            const feedCountLabel = summary.total > summary.latest.length
+                ? `${summary.latest.length} de ${summary.total}`
+                : `${summary.total}`;
+
             document.getElementById('region-modal-body').innerHTML = `
-                <div class="thread-header">
-                    <div>
-                        <div style="font-size:1.1rem; font-weight:700; display:flex; align-items:center; gap:8px;"><i class="ri-map-pin-2-fill" style="color:#34d399;"></i> ${regionName}</div>
-                        <div class="thread-sender">Resumo operacional da região, com foco em pressão, resolução e sinais de satisfação.</div>
+                <div class="region-modal-header">
+                    <div class="region-modal-title">
+                        <div class="region-modal-title-icon"><i class="ri-map-pin-2-fill"></i></div>
+                        <div>
+                            <h2>${regionName}</h2>
+                            <p>Resumo operacional da região — pressão, resolução e sinais de satisfação.</p>
+                        </div>
                     </div>
-                    <button onclick="closeRegionModal()" style="background:transparent;border:none;color:var(--text-muted);font-size:1.4rem;cursor:pointer;line-height:1;">×</button>
+                    <button class="btn-add region-modal-open-cards" onclick="openFeedbacksByRegion('${regionName.replace(/'/g, "\\'")}')"><i class="ri-filter-3-line"></i> Abrir cards da região</button>
+                    <button class="region-modal-close" onclick="closeRegionModal()" title="Fechar"><i class="ri-close-line"></i></button>
                 </div>
-                <div class="region-modal-layout">
+                <div class="region-modal-content">
                     <div class="region-modal-kpis">
                         <div class="region-kpi kpi-demandas">
                             <div class="region-kpi-icon"><i class="ri-file-list-3-line"></i></div>
-                            <div class="region-kpi-label">Demandas</div>
-                            <div class="region-kpi-value">${summary.total}</div>
+                            <div class="region-kpi-text">
+                                <div class="region-kpi-label">Demandas</div>
+                                <div class="region-kpi-value">${summary.total}</div>
+                            </div>
                         </div>
                         <div class="region-kpi kpi-criticas">
                             <div class="region-kpi-icon"><i class="ri-alert-line"></i></div>
-                            <div class="region-kpi-label">Críticas + Urgentes</div>
-                            <div class="region-kpi-value">${summary.critical + summary.urgent}</div>
+                            <div class="region-kpi-text">
+                                <div class="region-kpi-label">Críticas + Urgentes</div>
+                                <div class="region-kpi-value">${summary.critical + summary.urgent}</div>
+                            </div>
                         </div>
                         <div class="region-kpi kpi-resolucao">
                             <div class="region-kpi-icon"><i class="ri-checkbox-circle-line"></i></div>
-                            <div class="region-kpi-label">Resolução</div>
-                            <div class="region-kpi-value">${summary.resolvedPct}%</div>
+                            <div class="region-kpi-text">
+                                <div class="region-kpi-label">Resolução</div>
+                                <div class="region-kpi-value">${summary.resolvedPct}%</div>
+                            </div>
                         </div>
                         <div class="region-kpi kpi-humor">
                             <div class="region-kpi-icon"><i class="ri-emotion-line"></i></div>
-                            <div class="region-kpi-label">Humor</div>
-                            <div class="region-kpi-value">${summary.satisfaction}%</div>
+                            <div class="region-kpi-text">
+                                <div class="region-kpi-label">Humor</div>
+                                <div class="region-kpi-value">${summary.satisfaction}%</div>
+                            </div>
                         </div>
                     </div>
                     <div class="region-modal-panels">
                         <div class="region-panel">
-                            <h3><i class="ri-time-line" style="color:#34d399;"></i> Últimas demandas</h3>
-                            ${latestHtml}
+                            <h3><i class="ri-time-line" style="color:#34d399;"></i> Últimas demandas <span class="region-panel-count">${feedCountLabel}</span></h3>
+                            <div class="region-feed-list">${latestHtml}</div>
                         </div>
                         <div class="region-panel">
                             <h3><i class="ri-fire-line" style="color:#f87171;"></i> Categorias que mais pressionam</h3>
@@ -3965,9 +4162,6 @@
                                 <div class="region-dominante-value"><i class="ri-fire-fill"></i> ${summary.topCategory}</div>
                             </div>
                         </div>
-                    </div>
-                    <div class="region-modal-actions">
-                        <button class="btn-add" onclick="openFeedbacksByRegion('${regionName.replace(/'/g, "\\'")}')"><i class="ri-filter-3-line"></i> Abrir cards da região</button>
                     </div>
                 </div>
             `;
@@ -4452,7 +4646,7 @@
         </div>
     </div>
     <div id="region-modal-overlay" class="modal-overlay hidden" onclick="if(event.target===this) closeRegionModal()">
-        <div class="modal-thread-box" id="region-modal-body">
+        <div class="modal-thread-box region-modal-box" id="region-modal-body">
             <!-- Populated by openRegionModal() -->
         </div>
     </div>
