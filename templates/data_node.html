@@ -3163,16 +3163,32 @@
             fetch(filterUrl)
                 .then(res => res.json())
                 .then(events => {
+                    // Busca por protocolo, nome ou telefone — lida ANTES do filtro de
+                    // status para encontrar tambem cards resolvidos. Tolera "#"/espacos.
+                    const buscaInput = document.getElementById('busca-protocolo');
+                    const busca = buscaInput ? buscaInput.value.trim().toLowerCase() : '';
+                    const buscaProto = busca.replace(/[#\s]/g, '');
+
                     const currentStatusFilter = document.getElementById('filtro-status')?.value || 'ativos';
-                    if (currentStatusFilter === 'ativos') {
+                    if (currentStatusFilter === 'ativos' && !busca) {
                         events = events.filter(e => (e.status || 'aberto') !== 'resolvido');
                     }
                     _allEventsCache = events;
+
+                    if (busca) {
+                        events = events.filter(e => {
+                            const proto = (e.protocol || '').toString().toLowerCase().replace(/[#\s]/g, '');
+                            const nome = (e.name || e.sender_name || '').toLowerCase();
+                            const sender = (e.sender || e.remoteJid || '').toLowerCase();
+                            return (buscaProto && proto.includes(buscaProto)) || nome.includes(busca) || sender.includes(busca);
+                        });
+                    }
+
                     const container = document.getElementById('feed-list-container');
                     container.innerHTML = '';
 
                     const countEl = document.getElementById('filter-count');
-                    if (filterUrl === '/api/events') {
+                    if (filterUrl === '/api/events' && !busca) {
                         totalFeedbacks = events.length;
                         countEl.innerText = `${events.length} feedbacks`;
                     } else {
