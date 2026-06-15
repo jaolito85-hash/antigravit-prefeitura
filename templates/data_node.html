@@ -2315,6 +2315,7 @@
 
         <div class="nav-label">FERRAMENTAS</div>
         <a href="/qrcodes" class="nav-item" style="text-decoration:none;color:inherit;"><i class="ri-qr-code-line"></i> QR Codes</a>
+        <a href="/ajuda" class="nav-item" style="text-decoration:none;color:inherit;"><i class="ri-question-line"></i> Ajuda</a>
 
         <div style="flex:1;"></div>
         <a href="/logout" class="nav-item" style="color:#ef4444;text-decoration:none;margin-top:auto;"><i class="ri-logout-box-r-line"></i> Sair</a>
@@ -2873,21 +2874,27 @@
         async function loadFeedbacks(filterUrl = '/api/events') {
             const res = await fetch(filterUrl);
             let events = await res.json();
+
+            // Busca por protocolo, nome ou telefone — lida ANTES do filtro de status
+            // para que a busca encontre tambem cards ja resolvidos.
+            const buscaInput = document.getElementById('busca-protocolo');
+            const busca = buscaInput ? buscaInput.value.trim().toLowerCase() : '';
+            // Protocolo sem "#" nem espacos: assim "#20260002" e "20260002" batem igual.
+            const buscaProto = busca.replace(/[#\s]/g, '');
+
             const currentStatusFilter = document.getElementById('filtro-status')?.value || 'ativos';
-            if (currentStatusFilter === 'ativos') {
+            if (currentStatusFilter === 'ativos' && !busca) {
                 events = events.filter(e => (e.status || 'aberto') !== 'resolvido');
             }
             _allEventsCache = events;
 
-            // Filtro de busca por protocolo, nome ou telefone
-            const buscaInput = document.getElementById('busca-protocolo');
-            const busca = buscaInput ? buscaInput.value.trim().toLowerCase() : '';
             if (busca) {
                 events = events.filter(e => {
-                    const proto = (e.protocol || '').toLowerCase();
+                    const proto = (e.protocol || '').toString().toLowerCase().replace(/[#\s]/g, '');
                     const nome = (e.name || e.sender_name || '').toLowerCase();
                     const sender = (e.sender || e.remoteJid || '').toLowerCase();
-                    return proto.includes(busca) || nome.includes(busca) || sender.includes(busca);
+                    const protoMatch = buscaProto && proto.includes(buscaProto);
+                    return protoMatch || nome.includes(busca) || sender.includes(busca);
                 });
             }
 
