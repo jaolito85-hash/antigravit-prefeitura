@@ -3180,7 +3180,7 @@
                     events.forEach(e => {
                         const u = (e.urgency || '').toLowerCase();
                         let urgencyColor = '#3b82f6';
-                        if (u.includes('crit') || u.includes('crÃ­t')) urgencyColor = '#ef4444';
+                        if (u.includes('crit') || u.includes('crít')) urgencyColor = '#ef4444';
                         else if (u.includes('urge')) urgencyColor = '#f59e0b';
                         else if (u.includes('aten')) urgencyColor = '#fcd34d';
                         else if (u.includes('posi')) urgencyColor = '#10b981';
@@ -3220,7 +3220,7 @@
                             </div>`;
 
                         const updateBadge = ''
-                            ? `<div class="update-badge"><i class="ri-chat-3-line"></i> ${interactionCount} intera${interactionCount === 1 ? 'Ã§Ã£o' : 'Ã§Ãµes'}</div>`
+                            ? `<div class="update-badge"><i class="ri-chat-3-line"></i> ${interactionCount} intera${interactionCount === 1 ? 'ção' : 'ções'}</div>`
                             : '';
 
                         let mediaThumb = '';
@@ -3333,7 +3333,7 @@
 
             const u = (e.urgency || '').toLowerCase();
             let urgencyColor = '#3b82f6';
-            if (u.includes('crit') || u.includes('crÃ­t')) urgencyColor = '#ef4444';
+            if (u.includes('crit') || u.includes('crít')) urgencyColor = '#ef4444';
             else if (u.includes('urge')) urgencyColor = '#f59e0b';
             else if (u.includes('aten')) urgencyColor = '#fcd34d';
             else if (u.includes('posi')) urgencyColor = '#10b981';
@@ -3390,7 +3390,7 @@
                     <button class="reply-send-btn" onclick="enviarResposta(${e.id})"><i class="ri-send-plane-2-fill"></i> Enviar</button>
                 </div>` : '';
             const sc = { 'aberto': { color: '#EF4444', label: 'Aberto', icon: 'ri-error-warning-line' }, 'em_andamento': { color: '#F59E0B', label: 'Em Andamento', icon: 'ri-loader-4-line' }, 'resolvido': { color: '#10B981', label: 'Resolvido', icon: 'ri-checkbox-circle-line' } }[status] || { color: '#EF4444', label: 'Aberto', icon: 'ri-error-warning-line' };
-            const showStatus = u.includes('urge') || u.includes('crit') || u.includes('crÃ­t');
+            const showStatus = u.includes('urge') || u.includes('crit') || u.includes('crít');
             const statusHtmlModal = showStatus ? `
                 <div class="status-dropdown" style="position:relative;">
                     <button onclick="toggleStatusMenu('modal-${e.id}')" style="background:${sc.color}20; color:${sc.color}; border:1px solid ${sc.color}; padding:5px 12px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600; display:flex; align-items:center; gap:5px;">

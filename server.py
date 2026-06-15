@@ -1882,15 +1882,15 @@ def generate_intelligence_panel(feedbacks):
     total = len(recent)
     open_count = sum(1 for fb in recent if fb.get('status', 'aberto') != 'resolvido')
     resolved_count = sum(1 for fb in recent if fb.get('status') == 'resolvido')
-    critical_count = sum(1 for fb in recent if fb.get('urgency') in ['Critico', 'CrÃ­tico', 'Urgente'])
+    critical_count = sum(1 for fb in recent if fb.get('urgency') in ['Critico', 'Crítico', 'Urgente'])
 
     region_counter = Counter(fb.get('region', 'N/A') for fb in valid)
     category_counter = Counter(fb.get('category', 'Geral') for fb in recent)
     critical_by_region = Counter(
-        fb.get('region', 'N/A') for fb in valid if fb.get('urgency') in ['Critico', 'CrÃ­tico', 'Urgente']
+        fb.get('region', 'N/A') for fb in valid if fb.get('urgency') in ['Critico', 'Crítico', 'Urgente']
     )
     critical_by_category = Counter(
-        fb.get('category', 'Geral') for fb in recent if fb.get('urgency') in ['Critico', 'CrÃ­tico', 'Urgente']
+        fb.get('category', 'Geral') for fb in recent if fb.get('urgency') in ['Critico', 'Crítico', 'Urgente']
     )
 
     region_watch = []
@@ -1915,7 +1915,7 @@ def generate_intelligence_panel(feedbacks):
             "category": category,
             "volume": volume,
             "critical": critical,
-            "insight": f"{critical} demandas sensÃ­veis em {volume} registros recentes" if critical else f"{volume} registros recentes nessa categoria"
+            "insight": f"{critical} demandas sensíveis em {volume} registros recentes" if critical else f"{volume} registros recentes nessa categoria"
         })
 
     top_problem = category_counter.most_common(1)[0][0] if category_counter else "Sem dados"
@@ -1923,33 +1923,33 @@ def generate_intelligence_panel(feedbacks):
 
     fallback = {
         "status": "warning" if critical_count else "good",
-        "executive_summary": f"A pressÃ£o atual estÃ¡ concentrada em {top_problem}, com maior atenÃ§Ã£o para {hottest_region}.",
-        "mayor_readout": f"{critical_count} demandas urgentes/crÃ­ticas pedem priorizaÃ§Ã£o, com {open_count} casos ainda abertos.",
+        "executive_summary": f"A pressão atual está concentrada em {top_problem}, com maior atenção para {hottest_region}.",
+        "mayor_readout": f"{critical_count} demandas urgentes/críticas pedem priorização, com {open_count} casos ainda abertos.",
         "priorities": [
             {
                 "title": f"Atuar em {top_problem}",
                 "urgency": "Alta" if critical_count else "Moderada",
-                "owner": "Secretaria responsÃ¡vel",
-                "reason": f"Ã‰ a categoria com maior volume recente ({category_counter.get(top_problem, 0)} registros)."
+                "owner": "Secretaria responsável",
+                "reason": f"É a categoria com maior volume recente ({category_counter.get(top_problem, 0)} registros)."
             },
             {
                 "title": f"Monitorar {hottest_region}",
                 "urgency": "Alta" if region_watch else "Moderada",
                 "owner": "Gabinete + secretaria local",
-                "reason": region_watch[0]["reason"] if region_watch else "Sem indÃ­cios regionais relevantes no momento."
+                "reason": region_watch[0]["reason"] if region_watch else "Sem indícios regionais relevantes no momento."
             }
         ],
         "region_watch": region_watch,
         "category_watch": category_watch,
         "opportunities": [
-            "Transformar elogios recorrentes em comunicaÃ§Ã£o institucional.",
-            "Cobrar atualizaÃ§Ã£o mais rÃ¡pida dos casos crÃ­ticos para reduzir pressÃ£o pÃºblica.",
-            "Usar o ranking por regiÃ£o para orientar agenda de gabinete e secretarias."
+            "Transformar elogios recorrentes em comunicação institucional.",
+            "Cobrar atualização mais rápida dos casos críticos para reduzir pressão pública.",
+            "Usar o ranking por região para orientar agenda de gabinete e secretarias."
         ],
         "actions": [
-            "Abrir forÃ§a-tarefa nas categorias com maior volume.",
-            "Revisar backlog aberto por regiÃ£o.",
-            "Dar retorno pÃºblico dos casos crÃ­ticos resolvidos."
+            "Abrir força-tarefa nas categorias com maior volume.",
+            "Revisar backlog aberto por região.",
+            "Dar retorno público dos casos críticos resolvidos."
         ],
         "kpis": {
             "open": open_count,
@@ -1975,28 +1975,28 @@ def generate_intelligence_panel(feedbacks):
                 f"- [{fb.get('urgency', 'Neutro')}] {fb.get('category', 'Geral')} | {fb.get('region', 'N/A')} | {preview[:120]}"
             )
 
-        prompt = f'''VocÃª Ã© um analista sÃªnior de gestÃ£o pÃºblica municipal.
-Analise os feedbacks recentes da Prefeitura de IvatÃ©-PR e produza uma leitura executiva objetiva para prefeito e secretÃ¡rios.
+        prompt = f'''Você é um analista sênior de gestão pública municipal.
+Analise os feedbacks recentes da Prefeitura de Ivaté-PR e produza uma leitura executiva objetiva para prefeito e secretários.
 
 DADOS ESTRUTURADOS:
 - Total analisado: {total}
 - Abertos/em andamento: {open_count}
 - Resolvidos: {resolved_count}
-- Urgentes/crÃ­ticos: {critical_count}
-- RegiÃµes mais citadas: {dict(region_counter.most_common(6))}
+- Urgentes/críticos: {critical_count}
+- Regiões mais citadas: {dict(region_counter.most_common(6))}
 - Categorias mais citadas: {dict(category_counter.most_common(6))}
-- Categorias sensÃ­veis: {dict(critical_by_category.most_common(6))}
+- Categorias sensíveis: {dict(critical_by_category.most_common(6))}
 
 FEEDBACKS RECENTES:
 {chr(10).join(feedback_lines)}
 
-Responda APENAS em JSON vÃ¡lido com esta estrutura:
+Responda APENAS em JSON válido com esta estrutura:
 {{
   "status": "good" | "warning" | "critical",
   "executive_summary": "texto curto",
   "mayor_readout": "texto curto para prefeito",
   "priorities": [
-    {{"title": "...", "urgency": "Alta|MÃ©dia|Baixa", "owner": "...", "reason": "..."}}
+    {{"title": "...", "urgency": "Alta|Média|Baixa", "owner": "...", "reason": "..."}}
   ],
   "region_watch": [
     {{"region": "...", "volume": 0, "critical": 0, "pressure": 0, "reason": "..."}}
@@ -2009,10 +2009,10 @@ Responda APENAS em JSON vÃ¡lido com esta estrutura:
 }}
 
 Regras:
-- Seja concreto e acionÃ¡vel.
-- NÃ£o invente dados fora do contexto.
-- Foque em risco operacional, pressÃ£o territorial, gargalos e oportunidade de comunicaÃ§Ã£o pÃºblica.
-- No mÃ¡ximo 3 prioridades, 4 regiÃµes, 4 categorias, 3 oportunidades e 3 aÃ§Ãµes.
+- Seja concreto e acionável.
+- Não invente dados fora do contexto.
+- Foque em risco operacional, pressão territorial, gargalos e oportunidade de comunicação pública.
+- No máximo 3 prioridades, 4 regiões, 4 categorias, 3 oportunidades e 3 ações.
 '''
 
         response = openai_chat_completion(
