@@ -33,6 +33,53 @@ if not WEBHOOK_SECRET:
     print("[SEGURANCA] AVISO: WEBHOOK_SECRET nao configurado — webhook aceitara qualquer request.")
     print("[SEGURANCA] Configure WEBHOOK_SECRET no .env para validar a origem das requisicoes.")
 
+# --- Concorrência (Gunicorn roda com 1 worker e 4 threads — ver Dockerfile) ---
+# O estado em memória abaixo é compartilhado entre as 4 threads e precisa de serialização.
+
+# Lock por número: serializa o processamento das mensagens de um mesmo cidadão,
+# evitando race condition no read-modify-write do feedback ativo e IDs duplicados.
+_jid_locks = {}
+_jid_locks_master = threading.Lock()
+
+def acquire_jid_lock(remote_jid):
+    """Retorna um lock exclusivo (já adquirido) para o número informado.
+
+    Garante que duas mensagens quase simultâneas do mesmo cidadão sejam
+    processadas em sequência, sem perder texto nem duplicar o card/protocolo.
+    """
+    with _jid_locks_master:
+        lock = _jid_locks.get(remote_jid)
+        if lock is None:
+            lock = threading.Lock()
+            _jid_locks[remote_jid] = lock
+    lock.acquire()
+    return lock
+
+# Idempotência: ignora reenvio do mesmo evento pela Evolution (retry/timeout).
+_processed_messages = {}  # {message_id: timestamp}
+_processed_lock = threading.Lock()
+PROCESSED_MSG_TTL = 600   # 10 min cobrem a janela de reentrega da Evolution
+
+def ja_processado(msg_id):
+    """True se o message_id já foi visto recentemente; registra o id ao checar."""
+    if not msg_id:
+        return False
+    now = time_now()
+    with _processed_lock:
+        # Limpeza preguiçosa — o cache fica pequeno em escala de piloto.
+        if len(_processed_messages) > 2000:
+            for k in [k for k, t in _processed_messages.items() if now - t > PROCESSED_MSG_TTL]:
+                _processed_messages.pop(k, None)
+        ultimo = _processed_messages.get(msg_id)
+        if ultimo is not None and now - ultimo < PROCESSED_MSG_TTL:
+            return True
+        _processed_messages[msg_id] = now
+        return False
+
+# Lock para o rate-limit GLOBAL e para escrita de arquivos JSON compartilhados.
+_global_rate_lock = threading.Lock()
+_json_write_lock = threading.Lock()
+
 # Config
 EVOLUTION_API_URL = os.getenv("EVOLUTION_API_URL")
 EVOLUTION_API_KEY = os.getenv("EVOLUTION_API_KEY")
@@ -656,9 +703,10 @@ def responder_consulta_protocolo(remote_jid: str, text: str) -> dict | None:
 
 
 def save_json(filepath, data):
-    """Fallback for local JSON files"""
-    with open(filepath, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    """Fallback for local JSON files (escrita serializada entre threads)."""
+    with _json_write_lock:
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
 
 def get_feedbacks():
     """Get feedbacks from Supabase or local JSON"""
@@ -1371,7 +1419,17 @@ def openai_chat_completion(client, *, model, messages, max_tokens=None, temperat
 
 
 def extract_response_text(response):
-    return response.choices[0].message.content.strip()
+    """Extrai o texto da resposta da OpenAI de forma defensiva.
+
+    A OpenAI pode devolver content=None (ex.: finish_reason='length' ou recusa),
+    o que quebraria o .strip(). Nesses casos retornamos string vazia e o chamador
+    cai no fallback fixo da Clara.
+    """
+    try:
+        content = response.choices[0].message.content
+    except (AttributeError, IndexError, TypeError):
+        return ""
+    return (content or "").strip()
 
 
 def ensure_protocol_in_reply(reply, protocol_num):
@@ -1707,20 +1765,27 @@ def send_whatsapp_message(remote_jid, message):
     }
     payload = {"number": remote_jid, "text": message}
 
-    for attempt in range(2):
+    max_attempts = 3
+    for attempt in range(max_attempts):
         try:
             response = requests.post(url, json=payload, headers=headers, timeout=10)
             if response.status_code in (200, 201):
                 return True
-            print(f"[WHATSAPP] Erro ao enviar para {mascarar_telefone(remote_jid)}: status={response.status_code}")
-            if attempt == 0 and response.status_code >= 500:
-                continue  # retry em erro de servidor
-            return False
+            print(f"[WHATSAPP] Erro ao enviar para {mascarar_telefone(remote_jid)}: status={response.status_code} (tentativa {attempt + 1}/{max_attempts})")
+            if response.status_code >= 500 and attempt < max_attempts - 1:
+                continue  # erro de servidor: vale tentar de novo
+            break  # erro 4xx não melhora com retry
         except requests.exceptions.Timeout:
-            print(f"[WHATSAPP] Timeout ao enviar para {mascarar_telefone(remote_jid)} (tentativa {attempt + 1})")
+            print(f"[WHATSAPP] Timeout ao enviar para {mascarar_telefone(remote_jid)} (tentativa {attempt + 1}/{max_attempts})")
+            continue  # timeout: tenta novamente até esgotar
+        except requests.exceptions.RequestException as e:
+            print(f"[WHATSAPP] Erro de conexao ao enviar para {mascarar_telefone(remote_jid)}: {e} (tentativa {attempt + 1}/{max_attempts})")
+            continue  # falha de rede transitória: tenta novamente
         except Exception as e:
-            print(f"[WHATSAPP] Erro ao enviar para {mascarar_telefone(remote_jid)}: {e}")
-            return False
+            print(f"[WHATSAPP] Erro inesperado ao enviar para {mascarar_telefone(remote_jid)}: {e}")
+            break
+    # Falha definitiva: o cidadão NÃO recebeu a resposta. Log crítico para o admin agir.
+    print(f"❌ [WHATSAPP-CRITICAL] FALHA ao enviar para {mascarar_telefone(remote_jid)} apos {max_attempts} tentativas — cidadao ficou sem resposta.")
     return False
 
 # --- AI CITY PULSE ---
@@ -2457,11 +2522,12 @@ def is_globally_rate_limited():
     """Proteção contra ataque coordenado com múltiplos números."""
     global global_message_timestamps
     now = time_now()
-    global_message_timestamps = [t for t in global_message_timestamps if now - t < GLOBAL_RATE_WINDOW]
-    if len(global_message_timestamps) >= GLOBAL_RATE_MAX:
-        return True
-    global_message_timestamps.append(now)
-    return False
+    with _global_rate_lock:
+        global_message_timestamps = [t for t in global_message_timestamps if now - t < GLOBAL_RATE_WINDOW]
+        if len(global_message_timestamps) >= GLOBAL_RATE_MAX:
+            return True
+        global_message_timestamps.append(now)
+        return False
 
 
 def is_char_volume_limited(remote_jid, text_length):
@@ -3234,6 +3300,13 @@ def relatorio_page():
     return render_template("relatorio.html")
 
 
+@app.route("/qrcodes")
+@login_obrigatorio
+def qrcodes_page():
+    """Página para gerar e imprimir QR Codes do canal Voz Ativa (WhatsApp)."""
+    return render_template("qrcodes.html")
+
+
 @app.route("/api/relatorio")
 @login_obrigatorio
 def get_relatorio():
@@ -3658,6 +3731,7 @@ def webhook(event_type=None):
     except Exception:
         return jsonify({"error": "invalid_json"}), 400
 
+    _jid_lock = None  # lock por número, liberado no finally
     try:
         event_type = data.get("type") or data.get("event")
 
@@ -3692,6 +3766,19 @@ def webhook(event_type=None):
             # Ignora mensagens de grupo — processa apenas conversas privadas
             if remote_jid and remote_jid.endswith("@g.us"):
                 return jsonify({"status": "ignored_group"}), 200
+
+            # Idempotência: se a Evolution reenviar o mesmo evento (timeout/retry),
+            # ignora para não duplicar feedback, resposta ao cidadão nem custo de IA.
+            msg_id = key.get("id")
+            if msg_id and ja_processado(msg_id):
+                print(f"[IDEMPOTENCIA] Evento ja processado — ignorando reenvio")
+                return jsonify({"status": "duplicate_ignored"}), 200
+
+            # Serializa o processamento por número: duas mensagens quase simultâneas
+            # do mesmo cidadão (threads do Gunicorn) não podem corromper o feedback
+            # ativo nem gerar IDs/protocolos duplicados. Liberado no finally.
+            if remote_jid:
+                _jid_lock = acquire_jid_lock(remote_jid)
 
             push_name = msg_data.get("pushName", "Cidadão")
             message_content = msg_data.get("message", {})
@@ -4227,6 +4314,10 @@ def webhook(event_type=None):
         import traceback
         traceback.print_exc()
         return jsonify({"status": "error", "message": "Erro interno no processamento"}), 500
+    finally:
+        # Libera o lock por número em qualquer caminho de saída (return/exceção).
+        if _jid_lock is not None:
+            _jid_lock.release()
 
 @app.route("/api/admin/moderation", methods=["GET"])
 def list_moderation():

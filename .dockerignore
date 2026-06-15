@@ -1,0 +1,28 @@
+# Segredos — nunca devem entrar na imagem
+.env
+.env.*
+!.env.example
+
+# Git e metadados
+.git
+.gitignore
+.claude
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+*.egg-info/
+.venv/
+venv/
+
+# Testes e documentação (não precisam rodar em produção)
+tests/
+*.md
+
+# Estado local efêmero / temporários
+.tmp/
+execution/events.json
+execution/moderation_state.json

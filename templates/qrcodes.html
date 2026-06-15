@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QR Codes | Voz Ativa — Ivaté-PR</title>
+    <link rel="manifest" href="/static/manifest.json">
+    <meta name="theme-color" content="#059669">
+    <meta name="description" content="Gerar e imprimir QR Codes do canal Voz Ativa da Prefeitura de Ivaté">
+    <link rel="icon" type="image/png" sizes="512x512" href="/static/icons/icon-512.png">
+    <link rel="apple-touch-icon" href="/static/icons/icon-512.png">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/remixicon@3.5.0/fonts/remixicon.css" rel="stylesheet">
+    <script src="/static/vendor/qrcode.min.js"></script>
+    <style>
+        :root {
+            --bg-body: #050507;
+            --bg-sidebar: #0b0c10;
+            --bg-card: #111217;
+            --bg-hover: #1c1e26;
+            --accent-primary: #059669;
+            --accent-light: #10b981;
+            --whatsapp: #25D366;
+            --text-main: #ffffff;
+            --text-muted: #8b949e;
+            --border: #23252e;
+
+            /* Tinta do cartaz (impressão) */
+            --ink: #0f1115;
+            --ink-soft: #4b5563;
+            --paper: #ffffff;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        html { color-scheme: dark; }
+
+        html, body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--bg-body);
+            color: var(--text-main);
+            -webkit-font-smoothing: antialiased;
+        }
+
+        button, a, input, textarea { touch-action: manipulation; }
+
+        .sr-only {
+            position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+            overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+        }
+
+        /* ============================================================
+           INTERFACE (tela) — nada disto vai para o papel
+           ============================================================ */
+        .app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+
+        .topbar {
+            display: flex; align-items: center; justify-content: space-between;
+            gap: 16px; padding: 14px 22px;
+            background: linear-gradient(135deg, #0b0c10 0%, #111217 100%);
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+        .topbar__brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+        .topbar__brand img { height: 34px; width: auto; }
+        .topbar__title { font-weight: 700; font-size: 1rem; line-height: 1.1; }
+        .topbar__title span { color: var(--accent-light); }
+        .topbar__title small { display: block; font-weight: 500; font-size: .72rem; color: var(--text-muted); margin-top: 2px; }
+        .topbar__actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+
+        .btn {
+            display: inline-flex; align-items: center; gap: 8px;
+            font-family: inherit; font-weight: 600; font-size: .86rem;
+            padding: 10px 16px; border-radius: 12px; border: 1px solid var(--border);
+            background: var(--bg-card); color: var(--text-main); cursor: pointer;
+            text-decoration: none; transition: background .15s, transform .05s, border-color .15s;
+        }
+        .btn:hover { background: var(--bg-hover); }
+        .btn:active { transform: translateY(1px); }
+        .btn:focus-visible { outline: 2px solid var(--accent-light); outline-offset: 2px; }
+        .btn--primary {
+            background: linear-gradient(135deg, var(--accent-primary), var(--accent-light));
+            border: none; color: #fff; box-shadow: 0 4px 14px rgba(5, 150, 105, .3);
+        }
+        .btn--primary:hover { filter: brightness(1.06); background: linear-gradient(135deg, var(--accent-primary), var(--accent-light)); }
+
+        .workspace { display: flex; flex: 1; min-height: 0; }
+
+        /* Coluna de controles */
+        .controls {
+            width: 340px; flex-shrink: 0; background: var(--bg-sidebar);
+            border-right: 1px solid var(--border); padding: 22px; overflow-y: auto;
+            overscroll-behavior: contain;
+        }
+        .ctrl-group { margin-bottom: 26px; }
+        .ctrl-group > label,
+        .ctrl-label {
+            display: block; font-size: .72rem; font-weight: 700; letter-spacing: .08em;
+            text-transform: uppercase; color: var(--text-muted); margin-bottom: 10px;
+        }
+
+        .format-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .format-btn {
+            display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
+            padding: 11px 12px; border-radius: 12px; border: 1px solid var(--border);
+            background: var(--bg-card); color: var(--text-main); cursor: pointer;
+            font-family: inherit; text-align: left; transition: border-color .15s, background .15s;
+        }
+        .format-btn i { font-size: 1.15rem; color: var(--text-muted); }
+        .format-btn strong { font-size: .82rem; font-weight: 600; }
+        .format-btn small { font-size: .68rem; color: var(--text-muted); }
+        .format-btn:hover { background: var(--bg-hover); }
+        .format-btn:focus-visible { outline: 2px solid var(--accent-light); outline-offset: 2px; }
+        .format-btn.is-active {
+            border-color: var(--accent-light);
+            background: rgba(5, 150, 105, .14);
+        }
+        .format-btn.is-active i { color: var(--accent-light); }
+
+        .field { margin-bottom: 14px; }
+        .field label { display: block; font-size: .8rem; font-weight: 600; margin-bottom: 6px; color: #d6dae0; }
+        .field input, .field textarea {
+            width: 100%; font-family: inherit; font-size: .88rem;
+            padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border);
+            background: #0d0e13; color: var(--text-main); resize: vertical;
+        }
+        .field input:focus, .field textarea:focus {
+            outline: none; border-color: var(--accent-light);
+            box-shadow: 0 0 0 3px rgba(5, 150, 105, .18);
+        }
+        .field .hint { font-size: .72rem; color: var(--text-muted); margin-top: 5px; line-height: 1.4; }
+
+        .phone-pill {
+            display: flex; align-items: center; gap: 10px; padding: 12px 14px;
+            border-radius: 12px; background: var(--bg-card); border: 1px solid var(--border);
+        }
+        .phone-pill i { font-size: 1.5rem; color: var(--whatsapp); }
+        .phone-pill div { line-height: 1.25; }
+        .phone-pill .n { font-weight: 700; font-size: 1.02rem; }
+        .phone-pill .l { font-size: .72rem; color: var(--text-muted); }
+
+        .notice {
+            display: flex; gap: 10px; padding: 12px 14px; border-radius: 12px;
+            background: rgba(245, 158, 11, .1); border: 1px solid rgba(245, 158, 11, .35);
+            font-size: .78rem; line-height: 1.45; color: #fcd9a3;
+        }
+        .notice i { font-size: 1.1rem; color: #f59e0b; flex-shrink: 0; margin-top: 1px; }
+        .notice a { color: #ffe6bd; font-weight: 700; }
+
+        .test-link {
+            display: inline-flex; align-items: center; gap: 6px; margin-top: 10px;
+            font-size: .8rem; font-weight: 600; color: var(--accent-light); text-decoration: none;
+        }
+        .test-link:hover { text-decoration: underline; }
+
+        /* Área de pré-visualização ("mesa") */
+        .stage {
+            flex: 1; min-width: 0; overflow: auto; overscroll-behavior: contain;
+            background: #16181f; padding: 40px;
+            display: flex; align-items: flex-start; justify-content: center;
+        }
+
+        /* ============================================================
+           A FOLHA (papel A4) — visível na tela e impressa
+           ============================================================ */
+        .paper {
+            width: 210mm; height: 297mm; flex-shrink: 0;
+            background: var(--paper); color: var(--ink);
+            position: relative; overflow: hidden;
+            display: flex; align-items: center; justify-content: center;
+        }
+        @media screen {
+            .paper { zoom: .62; box-shadow: 0 18px 60px rgba(0, 0, 0, .55); border-radius: 2px; }
+        }
+
+        /* ---------- Cartaz completo (A4 / A5 / A6) ---------- */
+        .poster {
+            width: 100%; height: 100%;
+            display: flex; flex-direction: column;
+            padding: 16mm 14mm;
+            background:
+                radial-gradient(120% 80% at 50% -10%, rgba(5, 150, 105, .07), transparent 60%),
+                var(--paper);
+        }
+        .poster__top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+        .brand { display: flex; align-items: center; gap: 10px; }
+        .brand img { height: 17mm; width: auto; }
+        .brand__name { font-weight: 800; font-size: 4.4mm; line-height: 1.05; letter-spacing: .01em; text-transform: uppercase; color: var(--ink); }
+        .seal {
+            font-weight: 900; font-size: 4.6mm; letter-spacing: .02em;
+            color: #fff; padding: 2.4mm 5mm; border-radius: 999px;
+            background: linear-gradient(135deg, var(--accent-primary), var(--accent-light));
+            box-shadow: 0 2mm 5mm rgba(5, 150, 105, .25);
+        }
+
+        .poster__hero { text-align: center; margin-top: auto; }
+        .headline {
+            font-weight: 900; font-size: 15mm; line-height: 1.02; letter-spacing: -.02em;
+            color: var(--ink); text-wrap: balance;
+        }
+        .subhead {
+            font-size: 5mm; line-height: 1.4; color: var(--ink-soft);
+            max-width: 150mm; margin: 5mm auto 0; text-wrap: pretty;
+        }
+
+        .poster__qrwrap {
+            display: flex; align-items: center; justify-content: center; gap: 8mm;
+            margin: auto 0;
+        }
+        .qrbox {
+            width: 78mm; height: 78mm; padding: 5mm; border-radius: 6mm;
+            background: #fff; border: 1.2mm solid var(--ink);
+            box-shadow: 0 3mm 10mm rgba(0, 0, 0, .12);
+        }
+        .qrbox svg { display: block; width: 100%; height: 100%; }
+        .qrhint {
+            font-weight: 800; font-size: 6mm; line-height: 1.1; color: var(--ink); max-width: 42mm;
+        }
+
+        .steps {
+            list-style: none; display: flex; justify-content: center; gap: 6mm; margin: 4mm 0;
+        }
+        .steps li {
+            flex: 1; max-width: 52mm; display: flex; flex-direction: column; align-items: center;
+            gap: 2.5mm; text-align: center; font-size: 3.7mm; font-weight: 600; color: var(--ink-soft);
+        }
+        .steps li span {
+            width: 9mm; height: 9mm; border-radius: 50%; flex-shrink: 0;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: 900; font-size: 4.6mm; color: #fff;
+            background: linear-gradient(135deg, var(--accent-primary), var(--accent-light));
+        }
+
+        .poster__cta {
+            display: flex; align-items: center; justify-content: center; gap: 5mm;
+            padding: 6mm; border-radius: 5mm; margin-top: 2mm;
+            background: linear-gradient(135deg, var(--accent-primary), var(--accent-light)); color: #fff;
+        }
+        .poster__cta i { font-size: 13mm; line-height: 1; }
+        .poster__cta .cta__label { display: block; font-size: 4mm; font-weight: 600; opacity: .9; }
+        .poster__cta .cta__num { display: block; font-size: 10mm; font-weight: 900; letter-spacing: .01em; line-height: 1.05; }
+        .poster__fineprint { text-align: center; font-size: 3.2mm; color: var(--ink-soft); margin-top: 5mm; }
+
+        /* A5 — reduz a folha para um cartão centralizado com guia de corte */
+        .paper[data-format="a5"] .poster,
+        .paper[data-format="a6"] .poster { border: .3mm dashed #9aa3af; }
+        .paper[data-format="a5"] .poster { width: 148mm; height: 210mm; padding: 11mm 10mm; }
+        .paper[data-format="a5"] .headline { font-size: 11mm; }
+        .paper[data-format="a5"] .subhead { font-size: 3.8mm; }
+        .paper[data-format="a5"] .qrbox { width: 60mm; height: 60mm; }
+        .paper[data-format="a5"] .qrhint { font-size: 4.6mm; max-width: 32mm; }
+        .paper[data-format="a5"] .poster__cta .cta__num { font-size: 7.5mm; }
+        .paper[data-format="a5"] .poster__cta i { font-size: 10mm; }
+
+        /* A6 — cartão pequeno; esconde o que não cabe */
+        .paper[data-format="a6"] .poster { width: 105mm; height: 148mm; padding: 8mm 7mm; }
+        .paper[data-format="a6"] .brand img { height: 11mm; }
+        .paper[data-format="a6"] .brand__name { font-size: 3mm; }
+        .paper[data-format="a6"] .seal { font-size: 3.2mm; padding: 1.6mm 3.5mm; }
+        .paper[data-format="a6"] .headline { font-size: 7.4mm; }
+        .paper[data-format="a6"] .subhead { display: none; }
+        .paper[data-format="a6"] .qrbox { width: 44mm; height: 44mm; padding: 3mm; }
+        .paper[data-format="a6"] .qrhint { font-size: 3.6mm; max-width: 24mm; }
+        .paper[data-format="a6"] .steps { display: none; }
+        .paper[data-format="a6"] .poster__cta { padding: 3.5mm; gap: 3mm; }
+        .paper[data-format="a6"] .poster__cta i { font-size: 8mm; }
+        .paper[data-format="a6"] .poster__cta .cta__label { font-size: 3mm; }
+        .paper[data-format="a6"] .poster__cta .cta__num { font-size: 6mm; }
+        .paper[data-format="a6"] .poster__fineprint { font-size: 2.6mm; margin-top: 3mm; }
+
+        /* ---------- Folha de recorte (grade de mini-cartões) ---------- */
+        .paper[data-format="recorte"] { align-items: stretch; justify-content: stretch; }
+        .sheet {
+            width: 100%; height: 100%; padding: 10mm;
+            display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: repeat(4, 1fr);
+            gap: 0;
+        }
+        .mini {
+            display: flex; align-items: center; gap: 5mm; padding: 6mm;
+            border: .3mm dashed #9aa3af; break-inside: avoid;
+        }
+        .mini__qr { width: 34mm; height: 34mm; flex-shrink: 0; padding: 2mm; background: #fff; border: .8mm solid var(--ink); border-radius: 3mm; }
+        .mini__qr svg { display: block; width: 100%; height: 100%; }
+        .mini__txt { display: flex; flex-direction: column; gap: 1.6mm; min-width: 0; }
+        .mini__seal { align-self: flex-start; font-weight: 900; font-size: 3.4mm; color: #fff; padding: 1mm 3mm; border-radius: 999px; background: linear-gradient(135deg, var(--accent-primary), var(--accent-light)); }
+        .mini__txt strong { font-size: 4.6mm; font-weight: 800; color: var(--ink); line-height: 1.05; }
+        .mini__txt .mini__hint { font-size: 3.2mm; color: var(--ink-soft); }
+        .mini__num { font-size: 3.6mm; font-weight: 700; color: var(--accent-primary); }
+
+        /* ---------- Adesivos redondos ---------- */
+        .paper[data-format="adesivo"] { align-items: stretch; justify-content: stretch; }
+        .stickers {
+            width: 100%; height: 100%; padding: 12mm;
+            display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: repeat(3, 1fr);
+            gap: 6mm; place-items: center;
+        }
+        .sticker {
+            width: 84mm; height: 84mm; border-radius: 50%;
+            border: .4mm dashed #9aa3af; break-inside: avoid;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            gap: 2mm; padding: 7mm; text-align: center;
+            background: radial-gradient(circle at 50% 18%, rgba(5,150,105,.08), transparent 55%), #fff;
+        }
+        .sticker__seal { font-weight: 900; font-size: 4mm; color: #fff; padding: 1.2mm 4mm; border-radius: 999px; background: linear-gradient(135deg, var(--accent-primary), var(--accent-light)); }
+        .sticker__qr { width: 42mm; height: 42mm; padding: 2mm; background: #fff; border: .8mm solid var(--ink); border-radius: 3mm; }
+        .sticker__qr svg { display: block; width: 100%; height: 100%; }
+        .sticker__num { font-size: 3.6mm; font-weight: 700; color: var(--ink); }
+        .sticker__num b { color: var(--accent-primary); }
+
+        /* ============================================================
+           IMPRESSÃO
+           ============================================================ */
+        @page { size: A4; margin: 0; }
+        @media print {
+            html, body { background: #fff !important; height: auto; overflow: visible; }
+            .no-print { display: none !important; }
+            .app { display: block; height: auto; overflow: visible; }
+            .workspace { display: block; }
+            .stage { padding: 0; margin: 0; overflow: visible; background: #fff; display: block; }
+            .paper {
+                zoom: 1; box-shadow: none; border-radius: 0; margin: 0;
+                width: 210mm; height: 297mm;
+            }
+            /* Força a saída das cores institucionais (selo/faixa verde) */
+            * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                transition-duration: .01ms !important;
+                animation-duration: .01ms !important;
+                animation-iteration-count: 1 !important;
+            }
+        }
+
+        @media (max-width: 760px) {
+            .workspace { flex-direction: column; }
+            .controls { width: 100%; border-right: none; border-bottom: 1px solid var(--border); }
+        }
+    </style>
+</head>
+<body>
+    <div class="app">
+        <!-- Barra superior -->
+        <header class="topbar no-print">
+            <div class="topbar__brand">
+                <img src="/static/logo.png" alt="Prefeitura de Ivaté" onerror="this.style.display='none'">
+                <div class="topbar__title">
+                    QR Codes <span>Voz Ativa</span>
+                    <small>Prefeitura de Ivaté-PR</small>
+                </div>
+            </div>
+            <div class="topbar__actions">
+                <a href="/" class="btn"><i class="ri-arrow-left-line" aria-hidden="true"></i> Dashboard</a>
+                <button type="button" class="btn btn--primary" onclick="window.print()">
+                    <i class="ri-printer-line" aria-hidden="true"></i> Imprimir / Salvar PDF
+                </button>
+            </div>
+        </header>
+
+        <div class="workspace">
+            <!-- Controles -->
+            <aside class="controls no-print">
+                <div class="ctrl-group">
+                    <span class="ctrl-label">Formato</span>
+                    <div class="format-grid" id="formats" role="group" aria-label="Escolha o formato de impressão">
+                        <button type="button" class="format-btn is-active" data-format="a4" aria-pressed="true">
+                            <i class="ri-file-paper-2-line" aria-hidden="true"></i><strong>Cartaz A4</strong><small>Parede / mural</small>
+                        </button>
+                        <button type="button" class="format-btn" data-format="a5" aria-pressed="false">
+                            <i class="ri-sticky-note-line" aria-hidden="true"></i><strong>Cartão A5</strong><small>Balcão</small>
+                        </button>
+                        <button type="button" class="format-btn" data-format="a6" aria-pressed="false">
+                            <i class="ri-price-tag-3-line" aria-hidden="true"></i><strong>Cartão A6</strong><small>Mesa / recepção</small>
+                        </button>
+                        <button type="button" class="format-btn" data-format="recorte" aria-pressed="false">
+                            <i class="ri-grid-line" aria-hidden="true"></i><strong>Folha de recorte</strong><small>8 por página</small>
+                        </button>
+                        <button type="button" class="format-btn" data-format="adesivo" aria-pressed="false">
+                            <i class="ri-checkbox-blank-circle-line" aria-hidden="true"></i><strong>Adesivo redondo</strong><small>6 por página</small>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="ctrl-group">
+                    <span class="ctrl-label">Textos do cartaz</span>
+                    <div class="field">
+                        <label for="f-headline">Chamada principal</label>
+                        <input type="text" id="f-headline" maxlength="40" autocomplete="off" value="Sua voz transforma a cidade">
+                    </div>
+                    <div class="field">
+                        <label for="f-message">Mensagem que abre no WhatsApp</label>
+                        <textarea id="f-message" rows="3" maxlength="160" autocomplete="off">Olá! Quero deixar minha opinião pelo Voz Ativa 💬</textarea>
+                        <p class="hint">O cidadão recebe essa mensagem já digitada — é só tocar em enviar.</p>
+                    </div>
+                </div>
+
+                <div class="ctrl-group">
+                    <span class="ctrl-label">WhatsApp da Prefeitura</span>
+                    <div class="phone-pill">
+                        <i class="ri-whatsapp-line" aria-hidden="true"></i>
+                        <div>
+                            <div class="n">(44) 3170-1213</div>
+                            <div class="l">Número usado em todos os QR Codes</div>
+                        </div>
+                    </div>
+                    <a class="test-link" id="test-link" href="#" target="_blank" rel="noopener">
+                        <i class="ri-external-link-line" aria-hidden="true"></i> Testar o link agora
+                    </a>
+                </div>
+
+                <div class="ctrl-group">
+                    <div class="notice">
+                        <i class="ri-error-warning-line" aria-hidden="true"></i>
+                        <span>Antes de imprimir em quantidade: <a id="test-link-2" href="#" target="_blank" rel="noopener">abra o link</a> ou escaneie o QR com o celular e confirme que cai no WhatsApp certo. Na impressão, desmarque "Cabeçalhos e rodapés" e use margens "Nenhuma".</span>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Mesa de pré-visualização -->
+            <main class="stage">
+                <h1 class="sr-only">Gerar e imprimir QR Codes do programa Voz Ativa</h1>
+                <div class="paper" id="paper" data-format="a4" aria-label="Pré-visualização do material para impressão" aria-live="polite"></div>
+            </main>
+        </div>
+    </div>
+
+    <script>
+    (function () {
+        "use strict";
+
+        // Número do WhatsApp da Prefeitura (somente dígitos, padrão internacional)
+        var PHONE = "554431701213";
+        var PHONE_DISPLAY = "(44) 3170-1213";
+
+        var state = {
+            format: "a4",
+            headline: "Sua voz transforma a cidade",
+            message: "Olá! Quero deixar minha opinião pelo Voz Ativa 💬"
+        };
+
+        function escapeHtml(s) {
+            return String(s).replace(/[&<>"']/g, function (c) {
+                return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+            });
+        }
+
+        function waLink() {
+            return "https://wa.me/" + PHONE + "?text=" + encodeURIComponent(state.message);
+        }
+
+        // Gera o QR Code como SVG vetorial (nítido em qualquer tamanho de impressão)
+        function makeQrSvg() {
+            var qr = qrcode(0, "M"); // 0 = tamanho automático; "M" = correção média
+            qr.addData(waLink());
+            qr.make();
+            return qr.createSvgTag({
+                cellSize: 1,
+                margin: 4, // zona de silêncio (quiet zone) recomendada
+                scalable: true,
+                title: "QR Code do WhatsApp da Prefeitura de Ivaté — Voz Ativa"
+            });
+        }
+
+        var LOGO = '<img src="/static/logo.png" alt="Prefeitura de Ivaté" onerror="this.style.display=\'none\'">';
+
+        // Cartaz completo (usado em A4, A5 e A6 — o tamanho é controlado por CSS)
+        function buildPoster(qr) {
+            return '' +
+                '<div class="poster">' +
+                    '<div class="poster__top">' +
+                        '<div class="brand">' + LOGO + '<span class="brand__name">Prefeitura<br>de Ivaté</span></div>' +
+                        '<span class="seal">Voz Ativa</span>' +
+                    '</div>' +
+                    '<div class="poster__hero">' +
+                        '<h2 class="headline">' + escapeHtml(state.headline) + '</h2>' +
+                        '<p class="subhead">Fale direto com a Prefeitura pelo WhatsApp. É rápido, gratuito e a sua opinião ajuda a melhorar a nossa cidade.</p>' +
+                    '</div>' +
+                    '<div class="poster__qrwrap">' +
+                        '<div class="qrbox">' + qr + '</div>' +
+                        '<p class="qrhint">Aponte a câmera do seu celular</p>' +
+                    '</div>' +
+                    '<ol class="steps">' +
+                        '<li><span>1</span>Abra a câmera do celular</li>' +
+                        '<li><span>2</span>Aponte para o QR Code</li>' +
+                        '<li><span>3</span>Toque no link e mande sua mensagem</li>' +
+                    '</ol>' +
+                    '<div class="poster__cta">' +
+                        '<i class="ri-whatsapp-line" aria-hidden="true"></i>' +
+                        '<div><span class="cta__label">WhatsApp da Prefeitura</span><span class="cta__num">' + PHONE_DISPLAY + '</span></div>' +
+                    '</div>' +
+                    '<p class="poster__fineprint">Programa Voz Ativa &middot; Prefeitura Municipal de Ivaté-PR</p>' +
+                '</div>';
+        }
+
+        // Folha A4 com 8 mini-cartões para recortar
+        function buildSheet(qr) {
+            var cell = '' +
+                '<div class="mini">' +
+                    '<div class="mini__qr">' + qr + '</div>' +
+                    '<div class="mini__txt">' +
+                        '<span class="mini__seal">Voz Ativa</span>' +
+                        '<strong>Fale com a Prefeitura</strong>' +
+                        '<span class="mini__hint">Aponte a câmera do celular</span>' +
+                        '<span class="mini__num">WhatsApp ' + PHONE_DISPLAY + '</span>' +
+                    '</div>' +
+                '</div>';
+            var html = "";
+            for (var i = 0; i < 8; i++) { html += cell; }
+            return '<div class="sheet">' + html + '</div>';
+        }
+
+        // Folha A4 com 6 adesivos redondos
+        function buildStickers(qr) {
+            var cell = '' +
+                '<div class="sticker">' +
+                    '<span class="sticker__seal">Voz Ativa</span>' +
+                    '<div class="sticker__qr">' + qr + '</div>' +
+                    '<span class="sticker__num">WhatsApp <b>' + PHONE_DISPLAY + '</b></span>' +
+                '</div>';
+            var html = "";
+            for (var i = 0; i < 6; i++) { html += cell; }
+            return '<div class="stickers">' + html + '</div>';
+        }
+
+        function render() {
+            var qr = makeQrSvg();
+            var paper = document.getElementById("paper");
+            paper.setAttribute("data-format", state.format);
+
+            if (state.format === "recorte") {
+                paper.innerHTML = buildSheet(qr);
+            } else if (state.format === "adesivo") {
+                paper.innerHTML = buildStickers(qr);
+            } else {
+                paper.innerHTML = buildPoster(qr);
+            }
+
+            var link = waLink();
+            document.getElementById("test-link").href = link;
+            document.getElementById("test-link-2").href = link;
+        }
+
+        // --- Eventos ---
+        var formatBtns = document.querySelectorAll(".format-btn");
+        formatBtns.forEach(function (btn) {
+            btn.addEventListener("click", function () {
+                state.format = btn.getAttribute("data-format");
+                formatBtns.forEach(function (b) {
+                    var active = b === btn;
+                    b.classList.toggle("is-active", active);
+                    b.setAttribute("aria-pressed", active ? "true" : "false");
+                });
+                render();
+            });
+        });
+
+        document.getElementById("f-headline").addEventListener("input", function (e) {
+            state.headline = e.target.value || "Sua voz transforma a cidade";
+            render();
+        });
+        document.getElementById("f-message").addEventListener("input", function (e) {
+            state.message = e.target.value || "Olá! Quero deixar minha opinião pelo Voz Ativa";
+            render();
+        });
+
+        render();
+    })();
+    </script>
+</body>
+</html>
