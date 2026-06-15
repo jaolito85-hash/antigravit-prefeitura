@@ -5,6 +5,7 @@
 import sys
 import types
 import unittest
+from datetime import datetime, timedelta
 
 # --- Stubs de ambiente (mesma abordagem dos outros testes) ---
 flask_stub = types.ModuleType("flask")
@@ -118,6 +119,27 @@ class TemperatureHandlingTest(unittest.TestCase):
         self.assertEqual(len(calls), 2)            # 1ª com temperature, 2ª sem
         self.assertIn("temperature", calls[0])
         self.assertNotIn("temperature", calls[1])
+
+
+class ActiveFeedbackWindowTest(unittest.TestCase):
+    def _iso(self, horas_atras):
+        return (datetime.utcnow() - timedelta(hours=horas_atras)).isoformat()
+
+    def test_chamado_recente_esta_dentro_da_janela(self):
+        self.assertTrue(server._feedback_dentro_da_janela({"updated_at": self._iso(1)}, 6))
+
+    def test_chamado_antigo_fica_fora_da_janela(self):
+        # Card de 30h atrás não deve capturar uma demanda nova.
+        self.assertFalse(server._feedback_dentro_da_janela({"updated_at": self._iso(30)}, 6))
+
+    def test_sem_limite_considera_sempre_ativo(self):
+        self.assertTrue(server._feedback_dentro_da_janela({"updated_at": self._iso(100)}, None))
+
+    def test_sem_data_nao_bloqueia(self):
+        self.assertTrue(server._feedback_dentro_da_janela({}, 6))
+
+    def test_usa_timestamp_quando_nao_ha_updated_at(self):
+        self.assertTrue(server._feedback_dentro_da_janela({"timestamp": self._iso(2)}, 6))
 
 
 if __name__ == "__main__":

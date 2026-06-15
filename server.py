@@ -3567,38 +3567,55 @@ def get_top_analytics():
 
 
 # --- HELPER: GET ACTIVE FEEDBACK ---
-def get_active_feedback(remote_jid):
-    """Verifica se existe um chamado Aberto ou Em Andamento para este número"""
+# Janela de "conversa ativa" para o threading. Um chamado mais antigo que isso
+# (mesmo ainda 'aberto') NÃO captura uma mensagem nova — evita que uma demanda
+# nova e não relacionada do mesmo cidadão seja anexada ao card antigo ou tratada
+# como resposta de localização.
+ACTIVE_FEEDBACK_WINDOW_HOURS = 6
+
+
+def _feedback_dentro_da_janela(fb, max_age_hours):
+    """True se o chamado foi atualizado dentro da janela (ou se não há limite)."""
+    if not max_age_hours or not fb:
+        return True
+    dt = parse_iso_datetime(fb.get('updated_at') or fb.get('timestamp'))
+    if not dt:
+        return True  # sem data confiável: mantém o comportamento antigo
+    return (datetime.utcnow() - dt) <= timedelta(hours=max_age_hours)
+
+
+def get_active_feedback(remote_jid, max_age_hours=None):
+    """Verifica se existe um chamado Aberto ou Em Andamento para este número.
+
+    max_age_hours: se informado, só considera ativo um chamado atualizado dentro
+    dessa janela de horas. Evita que um chamado antigo ainda 'aberto' capture uma
+    demanda nova do mesmo cidadão (ex.: tratá-la como resposta de localização).
+    """
     sb = get_supabase()
     if not sb:
         return None
-    
-    try:
-        response = sb.table('feedbacks')\
+
+    def _consultar(client):
+        resp = client.table('feedbacks')\
             .select("*")\
             .eq('sender', remote_jid)\
             .in_('status', ['aberto', 'em_andamento'])\
             .order('id', desc=True)\
             .limit(1)\
             .execute()
-            
-        if response.data and len(response.data) > 0:
-            return response.data[0]
+        if resp.data and len(resp.data) > 0:
+            fb = resp.data[0]
+            return fb if _feedback_dentro_da_janela(fb, max_age_hours) else None
         return None
+
+    try:
+        return _consultar(sb)
     except Exception as e:
         print(f"Erro ao buscar feedback ativo (sender): {e}")
         sb = _reconnect_supabase()
         if sb:
             try:
-                response = sb.table('feedbacks')\
-                    .select("*")\
-                    .eq('sender', remote_jid)\
-                    .in_('status', ['aberto', 'em_andamento'])\
-                    .order('id', desc=True)\
-                    .limit(1)\
-                    .execute()
-                if response.data and len(response.data) > 0:
-                    return response.data[0]
+                return _consultar(sb)
             except Exception as e2:
                 print(f"Supabase retry get_active_feedback failed: {e2}")
         return None
@@ -4088,7 +4105,9 @@ def webhook(event_type=None):
                     return jsonify({"status": ai_action["status"]}), 200
 
                 # --- SMART THREADING LOGIC ---
-                active_feedback = get_active_feedback(remote_jid)
+                # Só threada em chamado ativo recente (janela). Card antigo ainda
+                # 'aberto' não captura uma demanda nova e não relacionada.
+                active_feedback = get_active_feedback(remote_jid, max_age_hours=ACTIVE_FEEDBACK_WINDOW_HOURS)
                 linked_from_id = None
 
                 # Fluxo especial: Clara pediu rua/bairro e o cidadao respondeu.
