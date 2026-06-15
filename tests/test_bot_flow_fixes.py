@@ -2,7 +2,9 @@
 - Modelos gpt-5* não aceitam temperature customizado (erro 400) -> não enviar.
 - Mensagem pré-preenchida do QR Code é abre-conversa, não demanda (sem protocolo).
 """
+import os
 import sys
+import tempfile
 import types
 import unittest
 from datetime import datetime, timedelta
@@ -129,6 +131,45 @@ class AbuseScoringTest(unittest.TestCase):
         self.assertEqual(r["score"], 1)
         self.assertFalse(r["severe"])
         self.assertIn("palavrão", r["reasons"])
+
+
+class ModerationPersistenceTest(unittest.TestCase):
+    """Em teste, get_supabase() é None → exercita o fallback (mesma lógica de shape)."""
+
+    def setUp(self):
+        tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
+        tmp.close()
+        self._tmp = tmp.name
+        self._orig = server.MODERATION_FILE
+        server.MODERATION_FILE = self._tmp
+
+    def tearDown(self):
+        server.MODERATION_FILE = self._orig
+        try:
+            os.unlink(self._tmp)
+        except OSError:
+            pass
+
+    def test_round_trip_de_bloqueio(self):
+        jid = "554499999999@s.whatsapp.net"
+        state, entry = server.get_moderation_entry(jid)
+        self.assertEqual(entry["abuse_score"], 0)
+        self.assertIn(jid, state)  # state contém só esse número
+
+        entry["abuse_score"] = 8
+        entry["status"] = "blocked"
+        state[jid] = entry
+        server.save_moderation_state(state)
+
+        # Releitura simula "depois do deploy": o bloqueio deve persistir.
+        _, recarregado = server.get_moderation_entry(jid)
+        self.assertEqual(recarregado["abuse_score"], 8)
+        self.assertEqual(recarregado["status"], "blocked")
+
+        # Reset (admin) limpa.
+        server.delete_moderation_entry(jid)
+        _, depois = server.get_moderation_entry(jid)
+        self.assertEqual(depois["abuse_score"], 0)
 
 
 class MarkerInjectionTest(unittest.TestCase):

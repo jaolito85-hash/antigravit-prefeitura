@@ -281,15 +281,13 @@ def save_json(filepath, data):
     with open(filepath, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-def load_moderation_state():
-    return load_json(MODERATION_FILE, {})
+# Estado de moderação persistido no Supabase (tabela `moderation`, uma linha por
+# número). Antes era um JSON local que sumia a cada deploy. Mantemos o JSON local
+# como fallback caso o Supabase esteja indisponível (degrada, não quebra).
+MODERATION_TABLE = 'moderation'
 
-def save_moderation_state(state):
-    save_json(MODERATION_FILE, state)
-
-def get_moderation_entry(remote_jid):
-    state = load_moderation_state()
-    entry = state.get(remote_jid) or {
+def _moderation_default_entry():
+    return {
         "abuse_score": 0,
         "status": "active",
         "mute_until": None,
@@ -297,7 +295,71 @@ def get_moderation_entry(remote_jid):
         "last_infraction_at": None,
         "infractions": []
     }
-    return state, entry
+
+def load_moderation_state():
+    """Carrega TODO o estado de moderação (usado pelo painel admin)."""
+    sb = get_supabase()
+    if sb:
+        try:
+            resp = sb.table(MODERATION_TABLE).select('remote_jid, entry').execute()
+            return {r['remote_jid']: r['entry'] for r in (resp.data or []) if r.get('entry')}
+        except Exception as e:
+            print(f"[MODERACAO] Falha ao ler estado do Supabase, usando JSON local: {e}")
+    return load_json(MODERATION_FILE, {})
+
+def save_moderation_state(state):
+    """Persiste as entradas de `state` via upsert por número no Supabase.
+
+    Cada chamada vem com um único número (via get_moderation_entry) e o upsert é
+    por linha — então NÃO há corrida entre números diferentes. Fallback: mescla
+    no JSON local.
+    """
+    sb = get_supabase()
+    if sb:
+        try:
+            for jid, entry in state.items():
+                sb.table(MODERATION_TABLE).upsert(
+                    {"remote_jid": jid, "entry": entry, "updated_at": datetime.utcnow().isoformat()},
+                    on_conflict="remote_jid",
+                ).execute()
+            return
+        except Exception as e:
+            print(f"[MODERACAO] Falha ao salvar no Supabase, usando JSON local: {e}")
+    local = load_json(MODERATION_FILE, {})
+    local.update(state)
+    save_json(MODERATION_FILE, local)
+
+def get_moderation_entry(remote_jid):
+    """Retorna (state, entry) de um número. `state` contém só esse número, então
+    `save_moderation_state(state)` faz upsert apenas dele."""
+    sb = get_supabase()
+    if sb:
+        try:
+            resp = sb.table(MODERATION_TABLE).select('entry').eq('remote_jid', remote_jid).limit(1).execute()
+            if resp.data and resp.data[0].get('entry'):
+                entry = resp.data[0]['entry']
+                return {remote_jid: entry}, entry
+            entry = _moderation_default_entry()
+            return {remote_jid: entry}, entry
+        except Exception as e:
+            print(f"[MODERACAO] Falha ao buscar {mascarar_telefone(remote_jid)} no Supabase, usando JSON local: {e}")
+    local = load_json(MODERATION_FILE, {})
+    entry = local.get(remote_jid) or _moderation_default_entry()
+    return {remote_jid: entry}, entry
+
+def delete_moderation_entry(remote_jid):
+    """Remove a moderação de um número (usado pelo reset admin)."""
+    sb = get_supabase()
+    if sb:
+        try:
+            sb.table(MODERATION_TABLE).delete().eq('remote_jid', remote_jid).execute()
+            return
+        except Exception as e:
+            print(f"[MODERACAO] Falha ao resetar {mascarar_telefone(remote_jid)} no Supabase, usando JSON local: {e}")
+    local = load_json(MODERATION_FILE, {})
+    if remote_jid in local:
+        del local[remote_jid]
+        save_json(MODERATION_FILE, local)
 
 def parse_iso_datetime(value):
     if not value:
@@ -319,6 +381,7 @@ def clean_expired_moderation(entry):
         entry["mute_until"] = None
     if last_infraction and (now - last_infraction) > timedelta(days=3):
         entry["abuse_score"] = max(0, int(entry.get("abuse_score", 0)) - 3)
+        entry["ia_warnings"] = 0  # zera aviso do pré-filtro IA após 3 dias sem infração
     if not entry.get("blocked_until") and not entry.get("mute_until"):
         entry["status"] = "active"
     return entry
@@ -337,8 +400,13 @@ def format_restriction_window(until_iso):
 def get_active_restriction(remote_jid):
     state, entry = get_moderation_entry(remote_jid)
     entry = clean_expired_moderation(entry)
-    state[remote_jid] = entry
-    save_moderation_state(state)
+    # Só persiste se houver estado de moderação real — evita criar/reescrever uma
+    # linha default para cada cidadão a cada mensagem (a maioria nunca é moderada).
+    if any([entry.get("abuse_score"), entry.get("blocked_until"),
+            entry.get("mute_until"), entry.get("ia_warnings"),
+            entry.get("infractions")]):
+        state[remote_jid] = entry
+        save_moderation_state(state)
 
     if entry.get("blocked_until"):
         return {
@@ -2949,7 +3017,8 @@ def contains_url(text):
 # ============================================================
 # PRÉ-FILTRO IA — Backup para o que escapa dos filtros de texto
 # ============================================================
-ia_moderation_warnings = {}  # {remote_jid: count}
+# (O contador de avisos do pré-filtro IA agora vive na entry de moderação
+#  persistida no Supabase — campo "ia_warnings" — em vez de um dict em memória.)
 
 def check_message_with_moderation_api(text, remote_jid=None):
     """Usa a Moderation API oficial para riscos claros sem bloquear denuncias legitimas."""
@@ -3065,10 +3134,17 @@ def handle_ai_moderation(remote_jid, text, ai_result):
     category = ai_result.get("category", "abuse")
     reason = ai_result.get("reason", "conteúdo impróprio")
 
-    warning_count = ia_moderation_warnings.get(remote_jid, 0)
+    # Contador de avisos persistido na entry (sobrevive a deploy/restart).
+    state, entry = get_moderation_entry(remote_jid)
+    entry = clean_expired_moderation(entry)
+    warning_count = int(entry.get("ia_warnings", 0))
+    now_mod = datetime.utcnow()
 
     if warning_count == 0:
-        ia_moderation_warnings[remote_jid] = 1
+        entry["ia_warnings"] = 1
+        entry["last_infraction_at"] = now_mod.isoformat()
+        state[remote_jid] = entry
+        save_moderation_state(state)
         print(f"[AI-FILTER] AVISO ({category}): {mascarar_telefone(remote_jid)} — {reason}")
         return {
             "handled": True,
@@ -3077,15 +3153,12 @@ def handle_ai_moderation(remote_jid, text, ai_result):
                      "Se tiver uma solicitação, pode me contar de forma respeitosa."
         }
     else:
-        ia_moderation_warnings[remote_jid] = warning_count + 1
-        print(f"[AI-FILTER] BLOQUEIO 72h ({category}): {mascarar_telefone(remote_jid)} — {reason}")
-        state, entry = get_moderation_entry(remote_jid)
-        entry = clean_expired_moderation(entry)
-        now_mod = datetime.utcnow()
+        entry["ia_warnings"] = warning_count + 1
         entry["abuse_score"] = 10
         entry["blocked_until"] = (now_mod + timedelta(hours=72)).isoformat()
         entry["status"] = "blocked"
         entry["last_infraction_at"] = now_mod.isoformat()
+        print(f"[AI-FILTER] BLOQUEIO 72h ({category}): {mascarar_telefone(remote_jid)} — {reason}")
         infractions = entry.get("infractions") or []
         infractions.insert(0, {
             "timestamp": now_mod.isoformat(),
@@ -4431,15 +4504,15 @@ def list_moderation():
 def reset_moderation():
     """Zera o estado de moderação de um número específico."""
     admin_key = os.getenv("ADMIN_KEY", "")
-    if not admin_key or request.json.get("key") != admin_key:
+    body = request.get_json(silent=True) or {}  # não quebra se vier sem JSON
+    if not admin_key or body.get("key") != admin_key:
         return jsonify({"error": "unauthorized"}), 401
-    phone = request.json.get("phone")
+    phone = body.get("phone")
     if not phone:
         return jsonify({"error": "phone required"}), 400
     state = load_moderation_state()
     if phone in state:
-        del state[phone]
-        save_moderation_state(state)
+        delete_moderation_entry(phone)
         print(f"[ADMIN] Moderação zerada para {mascarar_telefone(phone)}")
         return jsonify({"success": True, "phone": mascarar_telefone(phone)})
     return jsonify({"success": False, "message": "número não encontrado no estado de moderação"})
