@@ -133,9 +133,13 @@ EVENTS_FILE = 'execution/events.json'
 CONFIG_FILE = 'execution/config.json'
 MODERATION_FILE = 'execution/moderation_state.json'
 
-OPENAI_MODEL_CITIZEN_REPLY = os.getenv("OPENAI_MODEL_CITIZEN_REPLY", "gpt-5.5")
-OPENAI_MODEL_CLASSIFIER = os.getenv("OPENAI_MODEL_CLASSIFIER", "gpt-5.4-mini")
-OPENAI_MODEL_INTERNAL_DRAFT = os.getenv("OPENAI_MODEL_INTERNAL_DRAFT", "gpt-5.4-mini")
+# IMPORTANTE: usar modelos NÃO-reasoning para respostas/classificação.
+# Modelos de raciocínio (família gpt-5*) gastam o orçamento de tokens "pensando"
+# e devolvem conteúdo vazio com max_tokens baixo (cai no fallback), além de serem
+# lentos (~1 min) — ruim para um bot de WhatsApp. gpt-4o-mini é rápido e confiável.
+OPENAI_MODEL_CITIZEN_REPLY = os.getenv("OPENAI_MODEL_CITIZEN_REPLY", "gpt-4o-mini")
+OPENAI_MODEL_CLASSIFIER = os.getenv("OPENAI_MODEL_CLASSIFIER", "gpt-4o-mini")
+OPENAI_MODEL_INTERNAL_DRAFT = os.getenv("OPENAI_MODEL_INTERNAL_DRAFT", "gpt-4o-mini")
 OPENAI_MODEL_MODERATION = os.getenv("OPENAI_MODEL_MODERATION", "omni-moderation-latest")
 
 DEFAULT_REGIONS = [
@@ -3346,6 +3350,13 @@ def relatorio_page():
 def qrcodes_page():
     """Página para gerar e imprimir QR Codes do canal Voz Ativa (WhatsApp)."""
     return render_template("qrcodes.html")
+
+
+@app.route("/ajuda")
+@login_obrigatorio
+def ajuda_page():
+    """Página de ajuda/guia para os gestores durante o piloto do Voz Ativa."""
+    return render_template("ajuda.html")
 
 
 @app.route("/api/relatorio")
