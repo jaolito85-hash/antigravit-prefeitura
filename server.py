@@ -4051,8 +4051,14 @@ def webhook(event_type=None):
                         abuse["score"],
                         severe=abuse["severe"]
                     )
-                    send_whatsapp_message(remote_jid, moderation["reply"])
-                    return jsonify({"status": moderation["status"]}), 200
+                    # Só interrompe o atendimento em mute/bloqueio (ofensa grave ou
+                    # reincidência). Palavrão leve / 1ª ocorrência ("warned") apenas
+                    # registra a infração e SEGUE — assim uma reclamação legítima com
+                    # um palavrão ("que merda essa luz queimada") vira card normalmente
+                    # e a prefeitura não perde a demanda.
+                    if moderation["status"] in ("blocked", "muted"):
+                        send_whatsapp_message(remote_jid, moderation["reply"])
+                        return jsonify({"status": moderation["status"]}), 200
                 if is_burst_limited(remote_jid):
                     # Primeira vez que estoura: avisa. Msgs seguintes no cooldown: silêncio total.
                     if remote_jid in burst_cooldown_until and (burst_cooldown_until[remote_jid] - time_now()) > (BURST_COOLDOWN - 2):

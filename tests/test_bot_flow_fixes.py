@@ -121,6 +121,16 @@ class TemperatureHandlingTest(unittest.TestCase):
         self.assertNotIn("temperature", calls[1])
 
 
+class AbuseScoringTest(unittest.TestCase):
+    def test_palavrao_leve_e_warned_nao_descarta(self):
+        # Reclamação legítima com palavrão leve: score baixo, não-severo.
+        # No webhook isso vira "warned" e NÃO descarta o card (a demanda é registrada).
+        r = server.analyze_abuse_message("que merda essa luz queimada na minha rua")
+        self.assertEqual(r["score"], 1)
+        self.assertFalse(r["severe"])
+        self.assertIn("palavrão", r["reasons"])
+
+
 class MarkerInjectionTest(unittest.TestCase):
     def test_cidadao_nao_consegue_forjar_fala_da_clara(self):
         # Cidadão tenta injetar uma fala da "Clara" via marcador de conversa.
