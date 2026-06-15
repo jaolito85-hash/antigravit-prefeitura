@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ajuda | Voz Ativa — Ivaté-PR</title>
+    <link rel="manifest" href="/static/manifest.json">
+    <meta name="theme-color" content="#059669">
+    <meta name="description" content="Guia de ajuda do programa Voz Ativa para a equipe da Prefeitura de Ivaté">
+    <link rel="icon" type="image/png" sizes="512x512" href="/static/icons/icon-512.png">
+    <link rel="apple-touch-icon" href="/static/icons/icon-512.png">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/remixicon@3.5.0/fonts/remixicon.css" rel="stylesheet">
+    <style>
+        :root {
+            --bg-body: #050507;
+            --bg-card: #111217;
+            --bg-hover: #1c1e26;
+            --accent-primary: #059669;
+            --accent-light: #10b981;
+            --whatsapp: #25D366;
+            --text-main: #ffffff;
+            --text-muted: #8b949e;
+            --border: #23252e;
+
+            /* Tinta do guia impresso */
+            --ink: #0f1115;
+            --ink-soft: #4b5563;
+            --paper: #ffffff;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        html { color-scheme: dark; }
+
+        html, body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--bg-body);
+            color: var(--text-main);
+            -webkit-font-smoothing: antialiased;
+            line-height: 1.5;
+        }
+
+        button, a, summary { touch-action: manipulation; }
+
+        .sr-only {
+            position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+            overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+        }
+
+        a { color: var(--accent-light); }
+
+        /* ===================== Topo (não imprime) ===================== */
+        .topbar {
+            display: flex; align-items: center; justify-content: space-between;
+            gap: 16px; padding: 14px 22px; flex-wrap: wrap;
+            background: linear-gradient(135deg, #0b0c10 0%, #111217 100%);
+            border-bottom: 1px solid var(--border);
+            position: sticky; top: 0; z-index: 10;
+        }
+        .topbar__brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+        .topbar__brand img { height: 34px; width: auto; }
+        .topbar__title { font-weight: 700; font-size: 1rem; line-height: 1.1; }
+        .topbar__title span { color: var(--accent-light); }
+        .topbar__title small { display: block; font-weight: 500; font-size: .72rem; color: var(--text-muted); margin-top: 2px; }
+        .topbar__actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+
+        .btn {
+            display: inline-flex; align-items: center; gap: 8px;
+            font-family: inherit; font-weight: 600; font-size: .86rem;
+            padding: 10px 16px; border-radius: 12px; border: 1px solid var(--border);
+            background: var(--bg-card); color: var(--text-main); cursor: pointer;
+            text-decoration: none; transition: background .15s, border-color .15s;
+        }
+        .btn:hover { background: var(--bg-hover); }
+        .btn:focus-visible { outline: 2px solid var(--accent-light); outline-offset: 2px; }
+        .btn--primary {
+            background: linear-gradient(135deg, var(--accent-primary), var(--accent-light));
+            border: none; color: #fff; box-shadow: 0 4px 14px rgba(5, 150, 105, .3);
+        }
+
+        /* ===================== Conteúdo ===================== */
+        .content {
+            max-width: 880px; margin: 0 auto; padding: 28px 22px 64px;
+            display: flex; flex-direction: column; gap: 26px;
+        }
+
+        .section-title {
+            display: flex; align-items: center; gap: 10px;
+            font-size: 1.15rem; font-weight: 800; margin-bottom: 14px;
+        }
+        .section-title i { color: var(--accent-light); }
+
+        /* ---- Guia rápido (é o que vai para a impressão) ---- */
+        .guide {
+            background: var(--paper); color: var(--ink);
+            border-radius: 16px; padding: 28px 30px;
+            box-shadow: 0 18px 50px rgba(0, 0, 0, .45);
+        }
+        .guide__tag {
+            display: inline-flex; align-items: center; gap: 6px;
+            font-size: .72rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+            color: var(--accent-primary); margin-bottom: 14px;
+        }
+        .guide__head { display: flex; align-items: center; gap: 14px; border-bottom: 2px solid #e5e7eb; padding-bottom: 16px; margin-bottom: 18px; }
+        .guide__head img { height: 42px; width: auto; }
+        .guide__head h2 { font-size: 1.5rem; font-weight: 900; line-height: 1.05; color: var(--ink); }
+        .guide__head p { font-size: .85rem; color: var(--ink-soft); margin-top: 2px; }
+
+        .guide__block { margin-bottom: 16px; }
+        .guide__block:last-child { margin-bottom: 0; }
+        .guide__block h3 {
+            font-size: .78rem; font-weight: 800; letter-spacing: .05em; text-transform: uppercase;
+            color: var(--accent-primary); margin-bottom: 7px;
+        }
+        .guide__block p { color: #1f2937; font-size: .95rem; }
+        .guide__steps { list-style: none; display: grid; grid-template-columns: 1fr 1fr; gap: 8px 18px; }
+        .guide__steps li { display: flex; gap: 9px; align-items: flex-start; font-size: .9rem; color: #1f2937; }
+        .guide__steps li b { color: var(--ink); }
+        .guide__steps .num {
+            flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-size: .8rem; font-weight: 900; color: #fff;
+            background: linear-gradient(135deg, var(--accent-primary), var(--accent-light));
+        }
+        .guide__support {
+            display: flex; align-items: center; gap: 12px; margin-top: 18px;
+            padding: 14px 16px; border-radius: 12px;
+            background: #ecfdf5; border: 1px solid #a7f3d0;
+        }
+        .guide__support i { font-size: 1.8rem; color: #059669; }
+        .guide__support .lbl { font-size: .8rem; color: var(--ink-soft); }
+        .guide__support .num { font-size: 1.25rem; font-weight: 900; color: var(--ink); }
+
+        /* ---- FAQ ---- */
+        .faq { display: flex; flex-direction: column; gap: 10px; }
+        details {
+            background: var(--bg-card); border: 1px solid var(--border);
+            border-radius: 12px; overflow: hidden;
+        }
+        details[open] { border-color: rgba(16, 185, 129, .4); }
+        summary {
+            list-style: none; cursor: pointer; padding: 16px 18px;
+            font-weight: 600; font-size: .96rem; display: flex; align-items: center; gap: 10px;
+        }
+        summary::-webkit-details-marker { display: none; }
+        summary:focus-visible { outline: 2px solid var(--accent-light); outline-offset: -2px; }
+        summary .chev { margin-left: auto; color: var(--text-muted); transition: transform .2s; }
+        details[open] summary .chev { transform: rotate(180deg); }
+        summary .q-ico { color: var(--accent-light); font-size: 1.1rem; }
+        details .answer { padding: 0 18px 18px 46px; color: #c8cdd4; font-size: .92rem; }
+        details .answer strong { color: var(--text-main); }
+
+        /* ---- Checklist do mês ---- */
+        .panel {
+            background: var(--bg-card); border: 1px solid var(--border);
+            border-radius: 14px; padding: 22px 24px;
+        }
+        .panel .intro { color: var(--text-muted); font-size: .9rem; margin-bottom: 16px; }
+        .checklist { list-style: none; display: flex; flex-direction: column; gap: 12px; }
+        .checklist li { display: flex; gap: 12px; align-items: flex-start; font-size: .94rem; color: #d6dae0; }
+        .checklist .box {
+            flex-shrink: 0; width: 22px; height: 22px; border-radius: 6px; margin-top: 1px;
+            border: 2px solid var(--accent-primary); display: flex; align-items: center; justify-content: center;
+            color: var(--accent-light); font-size: .9rem;
+        }
+        .checklist li b { color: var(--text-main); }
+        .week-tag {
+            display: inline-block; font-size: .68rem; font-weight: 800; letter-spacing: .04em;
+            text-transform: uppercase; color: var(--accent-light);
+            background: rgba(5, 150, 105, .14); padding: 2px 8px; border-radius: 999px; margin-bottom: 4px;
+        }
+
+        /* ---- Suporte (tela) ---- */
+        .support-card {
+            display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+            background: linear-gradient(135deg, rgba(5,150,105,.16), rgba(16,185,129,.06));
+            border: 1px solid rgba(16, 185, 129, .35); border-radius: 14px; padding: 20px 24px;
+        }
+        .support-card i.wa { font-size: 2.4rem; color: var(--whatsapp); }
+        .support-card .txt { flex: 1; min-width: 200px; }
+        .support-card .txt strong { font-size: 1.05rem; }
+        .support-card .txt p { color: var(--text-muted); font-size: .86rem; margin-top: 2px; }
+
+        /* ===================== Impressão (só o guia, 1 folha A4) ===================== */
+        @page { size: A4; margin: 14mm; }
+        @media print {
+            html, body { background: #fff !important; }
+            .no-print { display: none !important; }
+            .content { max-width: none; margin: 0; padding: 0; gap: 0; }
+            .guide { box-shadow: none; border-radius: 0; padding: 0; }
+            .guide__support { background: #ecfdf5 !important; }
+            * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; }
+        }
+
+        @media (max-width: 600px) {
+            .guide__steps { grid-template-columns: 1fr; }
+            .guide { padding: 22px 20px; }
+        }
+    </style>
+</head>
+<body>
+    <header class="topbar no-print">
+        <div class="topbar__brand">
+            <img src="/static/logo.png" alt="Prefeitura de Ivaté" onerror="this.style.display='none'">
+            <div class="topbar__title">
+                Ajuda <span>Voz Ativa</span>
+                <small>Prefeitura de Ivaté-PR</small>
+            </div>
+        </div>
+        <div class="topbar__actions">
+            <a href="/" class="btn"><i class="ri-arrow-left-line" aria-hidden="true"></i> Dashboard</a>
+            <button type="button" class="btn btn--primary" onclick="window.print()">
+                <i class="ri-printer-line" aria-hidden="true"></i> Imprimir guia
+            </button>
+        </div>
+    </header>
+
+    <main class="content">
+        <h1 class="sr-only">Ajuda do programa Voz Ativa</h1>
+
+        <!-- ============ GUIA RÁPIDO (vai para a impressão) ============ -->
+        <section class="guide" aria-label="Guia rápido para imprimir">
+            <span class="guide__tag no-print"><i class="ri-printer-line" aria-hidden="true"></i> Guia rápido — imprima e deixe na mesa</span>
+            <div class="guide__head">
+                <img src="/static/logo.png" alt="" onerror="this.style.display='none'">
+                <div>
+                    <h2>Voz Ativa em 1 minuto</h2>
+                    <p>Guia rápido para a equipe da Prefeitura de Ivaté-PR</p>
+                </div>
+            </div>
+
+            <div class="guide__block">
+                <h3>O que é</h3>
+                <p>Um canal pelo WhatsApp onde o cidadão envia reclamações, sugestões e elogios sobre a cidade. A <b>Clara</b> (atendente virtual) responde e registra cada mensagem — e tudo aparece para vocês no painel.</p>
+            </div>
+
+            <div class="guide__block">
+                <h3>Como entrar</h3>
+                <p>Abra o sistema no navegador (computador ou celular) e entre com seu <b>usuário e senha</b>. No menu: Painel, Feedbacks, Regiões, Categorias, Inteligência e Relatório.</p>
+            </div>
+
+            <div class="guide__block">
+                <h3>No dia a dia</h3>
+                <ol class="guide__steps">
+                    <li><span class="num" aria-hidden="true">1</span><span>Abra o <b>Painel</b> e veja o resumo do dia.</span></li>
+                    <li><span class="num" aria-hidden="true">2</span><span>Em <b>Feedbacks</b>, leia as mensagens dos cidadãos.</span></li>
+                    <li><span class="num" aria-hidden="true">3</span><span>Para falar com o cidadão, clique em <b>Assumir atendimento</b>.</span></li>
+                    <li><span class="num" aria-hidden="true">4</span><span>Resolveu? Clique em <b>Resolver</b> para avisar o cidadão.</span></li>
+                </ol>
+            </div>
+
+            <div class="guide__block">
+                <h3>Neste mês de testes</h3>
+                <p>Divulgue o <b>QR Code</b> em locais públicos, entre no painel todos os dias e anote suas dúvidas. No fim do mês avaliamos juntos o que ajudou e o que melhorar.</p>
+            </div>
+
+            <div class="guide__support">
+                <i class="ri-whatsapp-line" aria-hidden="true"></i>
+                <div>
+                    <div class="lbl">Dúvidas? Suporte direto com João (Node Data)</div>
+                    <div class="num">WhatsApp (44) 99154-6866</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ============ FAQ (somente na tela) ============ -->
+        <section class="no-print" aria-labelledby="faq-title">
+            <h2 class="section-title" id="faq-title"><i class="ri-questionnaire-line" aria-hidden="true"></i> Perguntas frequentes</h2>
+            <div class="faq">
+                <details open>
+                    <summary><i class="ri-information-line q-ico" aria-hidden="true"></i> O que é o Voz Ativa? <i class="ri-arrow-down-s-line chev" aria-hidden="true"></i></summary>
+                    <div class="answer">É um canal direto pelo WhatsApp onde o cidadão de Ivaté envia <strong>reclamações, sugestões e elogios</strong> sobre a cidade. A Clara, nossa atendente virtual, recebe e registra cada mensagem com um número de protocolo, e tudo aparece aqui no painel para a equipe acompanhar.</div>
+                </details>
+                <details>
+                    <summary><i class="ri-time-line q-ico" aria-hidden="true"></i> Preciso ficar respondendo o tempo todo? <i class="ri-arrow-down-s-line chev" aria-hidden="true"></i></summary>
+                    <div class="answer">Não. A Clara atende <strong>automaticamente, 24 horas por dia</strong>, e registra cada caso. Você entra no painel quando quiser acompanhar, responder pessoalmente ou marcar um caso como resolvido.</div>
+                </details>
+                <details>
+                    <summary><i class="ri-robot-line q-ico" aria-hidden="true"></i> O que a Clara faz sozinha? <i class="ri-arrow-down-s-line chev" aria-hidden="true"></i></summary>
+                    <div class="answer">Ela conversa com o cidadão de forma educada, responde dúvidas comuns (horários, endereços e telefones da prefeitura), organiza cada mensagem por <strong>assunto, bairro e urgência</strong> e gera um protocolo. Ela nunca promete prazos nem entra em assuntos políticos.</div>
+                </details>
+                <details>
+                    <summary><i class="ri-user-shared-line q-ico" aria-hidden="true"></i> Quando eu preciso entrar? <i class="ri-arrow-down-s-line chev" aria-hidden="true"></i></summary>
+                    <div class="answer">Quando quiser falar diretamente com o cidadão (botão <strong>Assumir atendimento</strong>), atualizar a situação do caso (Aberto, Em andamento, Resolvido) ou avisar que o problema foi resolvido (<strong>Resolver</strong>).</div>
+                </details>
+                <details>
+                    <summary><i class="ri-chat-check-line q-ico" aria-hidden="true"></i> O cidadão sabe quando sou eu falando? <i class="ri-arrow-down-s-line chev" aria-hidden="true"></i></summary>
+                    <div class="answer">Sim. Ao clicar em <strong>Assumir atendimento</strong>, o cidadão recebe um aviso de que agora fala com um atendente humano, e suas respostas vão assinadas com o seu nome. Ao terminar, você pode <strong>Devolver para a Clara</strong>.</div>
+                </details>
+                <details>
+                    <summary><i class="ri-alarm-warning-line q-ico" aria-hidden="true"></i> E se chegar algo urgente ou grave? <i class="ri-arrow-down-s-line chev" aria-hidden="true"></i></summary>
+                    <div class="answer">O sistema marca automaticamente como <strong>Urgente</strong> ou <strong>Crítico</strong> (em vermelho) e destaca no Painel e na aba Inteligência. Em emergências de verdade, a Clara orienta o cidadão a ligar <strong>192</strong> (SAMU), <strong>193</strong> (Bombeiros) ou <strong>190</strong> (Polícia).</div>
+                </details>
+                <details>
+                    <summary><i class="ri-shield-check-line q-ico" aria-hidden="true"></i> Os dados dos cidadãos estão seguros? <i class="ri-arrow-down-s-line chev" aria-hidden="true"></i></summary>
+                    <div class="answer">Sim. Antes de participar, o cidadão dá <strong>consentimento conforme a LGPD</strong>. Os dados são usados só para o atendimento da prefeitura, não são compartilhados com terceiros, e o cidadão pode sair quando quiser enviando a palavra <strong>SAIR</strong>.</div>
+                </details>
+                <details>
+                    <summary><i class="ri-qr-code-line q-ico" aria-hidden="true"></i> Como divulgo o canal para a população? <i class="ri-arrow-down-s-line chev" aria-hidden="true"></i></summary>
+                    <div class="answer">Pelo menu <strong>Ferramentas → QR Codes</strong>. Escolha o formato (cartaz, cartão ou adesivo), imprima e cole em locais públicos como UBS, CRAS e a prefeitura. Quem aponta a câmera cai direto no WhatsApp do Voz Ativa.</div>
+                </details>
+                <details>
+                    <summary><i class="ri-smartphone-line q-ico" aria-hidden="true"></i> Funciona no celular? <i class="ri-arrow-down-s-line chev" aria-hidden="true"></i></summary>
+                    <div class="answer">Sim. O painel abre no navegador do celular e pode ser <strong>instalado como aplicativo</strong> (atalho na tela inicial), para acompanhar de qualquer lugar.</div>
+                </details>
+                <details>
+                    <summary><i class="ri-tools-line q-ico" aria-hidden="true"></i> Esqueci a senha ou vi algo errado na classificação. <i class="ri-arrow-down-s-line chev" aria-hidden="true"></i></summary>
+                    <div class="answer">Sem problema — isso é comum no começo do piloto. Me chame no <strong>WhatsApp do suporte</strong> (logo abaixo) que eu ajusto rapidinho.</div>
+                </details>
+            </div>
+        </section>
+
+        <!-- ============ O que testar neste mês (somente na tela) ============ -->
+        <section class="no-print" aria-labelledby="testes-title">
+            <h2 class="section-title" id="testes-title"><i class="ri-flag-2-line" aria-hidden="true"></i> O que observar neste mês de testes</h2>
+            <div class="panel">
+                <p class="intro">Sugestão de roteiro para o período de piloto. Não precisa fazer tudo de uma vez — o importante é usar e anotar o que achar.</p>
+                <ul class="checklist">
+                    <li><span class="box" aria-hidden="true"><i class="ri-check-line"></i></span><span><span class="week-tag">Comece por aqui</span><br><b>Divulgue o QR Code</b> em pelo menos 3 locais (UBS, CRAS e a prefeitura).</span></li>
+                    <li><span class="box" aria-hidden="true"><i class="ri-check-line"></i></span><span><b>Entre no Painel todos os dias</b> e leia o resumo da Clara sobre a cidade.</span></li>
+                    <li><span class="box" aria-hidden="true"><i class="ri-check-line"></i></span><span>Acompanhe a aba <b>Feedbacks</b> e leia algumas conversas dos cidadãos.</span></li>
+                    <li><span class="box" aria-hidden="true"><i class="ri-check-line"></i></span><span><b>Teste atender um caso de ponta a ponta:</b> Assumir atendimento → Responder → Resolver.</span></li>
+                    <li><span class="box" aria-hidden="true"><i class="ri-check-line"></i></span><span>Veja a aba <b>Inteligência</b> e o <b>Relatório</b> — é a visão pensada para o prefeito.</span></li>
+                    <li><span class="box" aria-hidden="true"><i class="ri-check-line"></i></span><span>Confira se os <b>bairros e categorias</b> estão sendo reconhecidos corretamente.</span></li>
+                    <li><span class="box" aria-hidden="true"><i class="ri-check-line"></i></span><span><b>Anote dúvidas e sugestões</b> para conversarmos durante o mês.</span></li>
+                    <li><span class="box" aria-hidden="true"><i class="ri-check-line"></i></span><span><span class="week-tag">Fim do mês</span><br>Avaliamos juntos se ajudou na gestão e o que melhorar.</span></li>
+                </ul>
+            </div>
+        </section>
+
+        <!-- ============ Suporte (somente na tela) ============ -->
+        <section class="no-print" aria-label="Suporte">
+            <a class="support-card" href="https://wa.me/5544991546866?text=Ol%C3%A1%20Jo%C3%A3o!%20Preciso%20de%20ajuda%20com%20o%20Voz%20Ativa." target="_blank" rel="noopener" style="text-decoration:none;color:inherit;">
+                <i class="ri-whatsapp-line wa" aria-hidden="true"></i>
+                <div class="txt">
+                    <strong>Travou em algo? Me chame no WhatsApp</strong>
+                    <p>João (Node Data) — (44) 99154-6866 · suporte durante o piloto</p>
+                </div>
+                <span class="btn btn--primary" aria-hidden="true"><i class="ri-arrow-right-line"></i> Abrir conversa</span>
+            </a>
+        </section>
+    </main>
+</body>
+</html>
