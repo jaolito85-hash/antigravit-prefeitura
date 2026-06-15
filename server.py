@@ -1389,6 +1389,15 @@ def _completion_token_param(model, max_tokens):
     return {"max_tokens": max_tokens}
 
 
+def _supports_custom_temperature(model):
+    """Modelos da família gpt-5 (reasoning) só aceitam temperature=1 (default).
+
+    Enviar temperature=0/0.5 para esses modelos causa erro 400
+    ('temperature does not support X with this model').
+    """
+    return not str(model or "").startswith("gpt-5")
+
+
 def openai_chat_completion(client, *, model, messages, max_tokens=None, temperature=None, timeout=None, remote_jid=None, json_schema=None):
     """Wrapper unico para chat completions com safety_identifier e schema rigido opcional."""
     kwargs = {
@@ -1396,7 +1405,8 @@ def openai_chat_completion(client, *, model, messages, max_tokens=None, temperat
         "messages": messages,
     }
     kwargs.update(_completion_token_param(model, max_tokens))
-    if temperature is not None:
+    # gpt-5* só aceita o temperature padrão (1); para esses modelos não enviamos o parâmetro.
+    if temperature is not None and _supports_custom_temperature(model):
         kwargs["temperature"] = temperature
     if timeout is not None:
         kwargs["timeout"] = timeout
@@ -1416,6 +1426,12 @@ def openai_chat_completion(client, *, model, messages, max_tokens=None, temperat
         if "max_completion_tokens" in kwargs:
             kwargs["max_tokens"] = kwargs.pop("max_completion_tokens")
         return client.chat.completions.create(**kwargs)
+    except Exception as e:
+        # Retry defensivo: se o modelo rejeitar 'temperature' (400), reenvia sem ela.
+        if "temperature" in str(e).lower() and "temperature" in kwargs:
+            kwargs.pop("temperature", None)
+            return client.chat.completions.create(**kwargs)
+        raise
 
 
 def extract_response_text(response):
@@ -3121,6 +3137,31 @@ def is_saudacao(text: str) -> bool:
     return False
 
 
+# Mensagem pré-preenchida do QR Code (abre-conversa do Voz Ativa). Não é uma
+# demanda real: deve receber boas-vindas e NÃO gerar protocolo.
+ABERTURA_CANAL_PHRASES = {
+    "quero deixar minha opiniao pelo voz ativa",
+    "quero deixar minha opiniao no voz ativa",
+    "ola quero deixar minha opiniao pelo voz ativa",
+    "ola quero deixar minha opiniao no voz ativa",
+    "oi quero deixar minha opiniao pelo voz ativa",
+}
+
+
+def is_abertura_canal(text: str) -> bool:
+    """Detecta a mensagem pré-preenchida do QR Code do Voz Ativa.
+
+    É um abre-conversa ("quero deixar minha opinião"), não a opinião em si —
+    portanto deve disparar as boas-vindas, não criar um chamado/protocolo.
+    """
+    if not text:
+        return False
+    norm = normalize_text(text)              # minúsculas, sem acento
+    norm = re.sub(r'[^a-z0-9 ]', ' ', norm)  # remove emoji/pontuação
+    norm = re.sub(r'\s+', ' ', norm).strip()
+    return norm in ABERTURA_CANAL_PHRASES
+
+
 def detectar_tipo_nao_suportado(message_content: dict) -> str | None:
     """Retorna o tipo da mensagem se for não suportado, ou None."""
     for tipo in TIPOS_NAO_SUPORTADOS:
@@ -3864,8 +3905,8 @@ def webhook(event_type=None):
                 if protocol_result and protocol_result.get("handled"):
                     return jsonify({"status": protocol_result["status"]}), 200
 
-            # --- SAUDAÇÕES ---
-            if text and remote_jid and is_saudacao(text):
+            # --- SAUDAÇÕES E ABERTURA DE CANAL (mensagem pré-preenchida do QR) ---
+            if text and remote_jid and (is_saudacao(text) or is_abertura_canal(text)):
                 send_whatsapp_message(remote_jid, RESPOSTA_SAUDACAO)
                 return jsonify({"status": "greeting_replied"}), 200
 
