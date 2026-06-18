@@ -26,6 +26,9 @@ app.config['TEMPLATES_AUTO_RELOAD'] = True
 app.secret_key = os.getenv("FLASK_SECRET_KEY") or os.urandom(32).hex()
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+# Painel roda exclusivamente em HTTPS (ivate.nodedata.com.br) — cookie de sessao
+# nunca deve trafegar em conexao nao cifrada.
+app.config['SESSION_COOKIE_SECURE'] = True
 
 # Webhook Secret (Evolution API deve enviar este header)
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
@@ -1590,14 +1593,22 @@ def parse_json_model_response(response):
 
 SENSITIVE_CASE_PATTERNS = {
     "seguranca_publica": [
-        r"\bpessoa armada\b", r"\barma\b", r"\btiro\b", r"\btiroteio\b", r"\bassalto\b",
-        r"\broubo\b", r"\bfurto\b", r"\btrafico\b", r"\btr[aá]fico\b", r"\bdroga\b",
-        r"\bamea[cç]a\b", r"\bviol[eê]ncia\b", r"\binvas[aã]o\b",
+        r"\bpessoa armada\b", r"\barma\b", r"\barmad[oa]s?\b", r"\btiro\b", r"\btiroteio\b",
+        r"\bassalto\b", r"\broubo\b", r"\bfurto\b", r"\btrafico\b", r"\bdroga\b",
+        # radicais (sem \b final) para pegar conjugacoes: ameaca/ameacando/ameacou, etc.
+        r"\bameac", r"\bviolen", r"\bagress", r"\bagred", r"\bespanc", r"\bsequestr",
+        r"\binvas[aã]o\b",
     ],
     "saude_grave": [
-        r"\bfalta de ar\b", r"\binfarto\b", r"\bavc\b", r"\bdesmai", r"\bsangr",
-        r"\brisco de vida\b", r"\bemerg[eê]ncia\b", r"\bambul[aâ]ncia\b", r"\bsamu\b",
-        r"\bmorrendo\b", r"\bmorte\b",
+        r"\bfalta de ar\b", r"\bnao consigo respirar\b", r"\bpassando mal\b",
+        r"\binfarto\b", r"\bavc\b", r"\bderrame\b", r"\bconvuls", r"\bdesmai", r"\bsangr",
+        r"\brisco de vida\b", r"\bemergencia\b", r"\bambulancia\b", r"\bsamu\b",
+        r"\bmorrendo\b", r"\bmorte\b", r"\bsocorro\b",
+    ],
+    "autolesao_suicidio": [
+        r"\bsuicid", r"\bme matar\b", r"\bme suicidar\b", r"\btirar (a |minha )vida\b",
+        r"\bquero morrer\b", r"\bnao quero mais viver\b", r"\bnao aguento mais viver\b",
+        r"\bautoles", r"\bme cortar\b", r"\bpor fim a tudo\b",
     ],
     "abuso_sexual": [
         r"\bestupro\b", r"\babuso sexual\b", r"\bass[eé]dio sexual\b", r"\bexplora[cç][aã]o sexual\b",
@@ -1632,8 +1643,17 @@ def is_sensitive_case(text):
 
 
 def build_sensitive_handoff_reply(protocol_num, category, reasons=None):
-    emergency_note = ""
     reasons = reasons or []
+    # Autolesao/suicidio: acolhimento e o CVV vem PRIMEIRO. Nunca tratar como
+    # reclamacao comum nem abrir com "registrei o protocolo".
+    if "autolesao_suicidio" in reasons:
+        return (
+            "Sinto muito que voce esteja passando por isso, e obrigada por confiar e falar comigo. "
+            "Voce nao esta sozinho(a). Por favor, fale agora com o CVV: ligue 188 (24h, gratuito e "
+            "sigiloso) ou acesse cvv.org.br. Se houver risco imediato a vida, ligue 192 (SAMU). "
+            "Encaminhei sua mensagem para nossa equipe de assistencia acompanhar com cuidado."
+        )
+    emergency_note = ""
     if any(r in reasons for r in ("seguranca_publica", "saude_grave", "abuso_sexual")):
         emergency_note = " Se houver risco imediato, acione tambem 190 (Policia Militar), 192 (SAMU) ou 193 (Bombeiros)."
     return (
@@ -4064,7 +4084,7 @@ def webhook(event_type=None):
                     return jsonify({"status": "audio_too_long"}), 200
                 
                 if native_transcription:
-                    print(f"[AUDIO] Using native transcription from Evolution: {native_transcription}")
+                    print(f"[AUDIO] Transcricao nativa recebida ({len(native_transcription)} chars)")
                     text = native_transcription
                 else:
                     # Transcrição via Whisper (download + IA) leva alguns segundos: mostra
@@ -4116,7 +4136,7 @@ def webhook(event_type=None):
                     print(f"[SPAM] Emoji-only message ignored")
                     return jsonify({"status": "ignored_emoji_only"}), 200
                 if is_mensagem_ininteligivel(text):
-                    print(f"[SPAM] Unintelligible message: '{text[:30]}'")
+                    print(f"[SPAM] Unintelligible message ({len(text)} chars)")
                     send_whatsapp_message(remote_jid, RESPOSTA_ININTELIGIVEL)
                     return jsonify({"status": "unintelligible_replied"}), 200
                 # Filtro de conteúdo sexual/assédio — bloqueio SEVERO 72h
@@ -4147,7 +4167,7 @@ def webhook(event_type=None):
                 # Filtro de relevância: mensagens que não são demandas municipais
                 resposta_irrelevante = is_mensagem_irrelevante(text)
                 if resposta_irrelevante:
-                    print(f"[IRRELEVANTE] Mensagem filtrada: '{text[:40]}'")
+                    print(f"[IRRELEVANTE] Mensagem filtrada ({len(text)} chars)")
                     send_whatsapp_message(remote_jid, resposta_irrelevante)
                     return jsonify({"status": "irrelevant_replied"}), 200
                 abuse = analyze_abuse_message(text)
@@ -4190,7 +4210,7 @@ def webhook(event_type=None):
                     return jsonify({"status": "char_volume_limited"}), 200
                 # Bloqueio total de URLs — nenhum link é aceito
                 if contains_url(text):
-                    print(f"[URL-BLOCKED] Link detectado de {mascarar_telefone(remote_jid)}: {text[:60]}")
+                    print(f"[URL-BLOCKED] Link detectado de {mascarar_telefone(remote_jid)} ({len(text)} chars)")
                     send_whatsapp_message(
                         remote_jid,
                         "Por segurança, não aceitamos mensagens com links. "
@@ -4333,7 +4353,7 @@ def webhook(event_type=None):
                 if ia_result:
                     # Se a IA determinou que não é demanda municipal, não abre card
                     if ia_result.get('relevante') is False and not active_feedback:
-                        print(f"[IRRELEVANTE-IA] Mensagem não é demanda municipal: '{text[:40]}'")
+                        print(f"[IRRELEVANTE-IA] Mensagem nao e demanda municipal ({len(text)} chars)")
                         send_whatsapp_message(remote_jid, RESPOSTA_IRRELEVANTE)
                         return jsonify({"status": "irrelevant_ia"}), 200
                     sentimento = ia_result.get('sentimento', 'Neutro')
@@ -4367,7 +4387,7 @@ def webhook(event_type=None):
                         or len(text.strip().split()) <= 3  # Até 3 palavras: provavelmente resposta
                     )
                     if _is_conversational and not same_category:
-                        print(f"[THREADING] Conversational reply '{text[:30]}' — forcing append to existing card {active_feedback.get('id')}")
+                        print(f"[THREADING] Conversational reply ({len(text)} chars) — forcing append to existing card {active_feedback.get('id')}")
                         same_category = True  # Força append ao card existente
 
                     if same_category:
