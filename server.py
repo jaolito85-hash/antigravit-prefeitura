@@ -144,6 +144,9 @@ OPENAI_MODEL_CITIZEN_REPLY = os.getenv("OPENAI_MODEL_CITIZEN_REPLY", "gpt-4o-min
 OPENAI_MODEL_CLASSIFIER = os.getenv("OPENAI_MODEL_CLASSIFIER", "gpt-4o-mini")
 OPENAI_MODEL_INTERNAL_DRAFT = os.getenv("OPENAI_MODEL_INTERNAL_DRAFT", "gpt-4o-mini")
 OPENAI_MODEL_MODERATION = os.getenv("OPENAI_MODEL_MODERATION", "omni-moderation-latest")
+# Esforço de raciocínio para modelos gpt-5* (reasoning). 'minimal' = resposta rápida,
+# quase sem "pensar"; suba para 'low'/'medium' se quiser mais qualidade (custo: latência/tokens).
+OPENAI_REASONING_EFFORT = os.getenv("OPENAI_REASONING_EFFORT", "minimal")
 
 DEFAULT_REGIONS = [
     "Centro",
@@ -1464,7 +1467,9 @@ def _completion_token_param(model, max_tokens):
     if max_tokens is None:
         return {}
     if str(model or "").startswith("gpt-5"):
-        return {"max_completion_tokens": max_tokens}
+        # gpt-5* gastam tokens "pensando" antes de escrever; o orçamento precisa cobrir
+        # raciocínio + resposta visível, senão o content volta vazio (finish_reason='length').
+        return {"max_completion_tokens": max_tokens + 600}
     return {"max_tokens": max_tokens}
 
 
@@ -1487,6 +1492,10 @@ def openai_chat_completion(client, *, model, messages, max_tokens=None, temperat
     # gpt-5* só aceita o temperature padrão (1); para esses modelos não enviamos o parâmetro.
     if temperature is not None and _supports_custom_temperature(model):
         kwargs["temperature"] = temperature
+    # gpt-5* são modelos de raciocínio: define o esforço de "pensar". 'minimal' mantém a
+    # resposta rápida e evita gastar todo o orçamento de tokens no raciocínio (vinha vazio).
+    if str(model or "").startswith("gpt-5") and OPENAI_REASONING_EFFORT:
+        kwargs["reasoning_effort"] = OPENAI_REASONING_EFFORT
     if timeout is not None:
         kwargs["timeout"] = timeout
     safety_identifier = build_safety_identifier(remote_jid)
@@ -1511,14 +1520,23 @@ def openai_chat_completion(client, *, model, messages, max_tokens=None, temperat
     try:
         return _crono(client.chat.completions.create(**kwargs))
     except TypeError:
+        # SDK mais antiga pode não conhecer kwargs novos — remove e tenta de novo.
         kwargs.pop("safety_identifier", None)
+        kwargs.pop("reasoning_effort", None)
         if "max_completion_tokens" in kwargs:
             kwargs["max_tokens"] = kwargs.pop("max_completion_tokens")
         return _crono(client.chat.completions.create(**kwargs))
     except Exception as e:
-        # Retry defensivo: se o modelo rejeitar 'temperature' (400), reenvia sem ela.
-        if "temperature" in str(e).lower() and "temperature" in kwargs:
+        # Retry defensivo: remove o parâmetro que o modelo rejeitou (400) e reenvia.
+        msg = str(e).lower()
+        changed = False
+        if "temperature" in msg and "temperature" in kwargs:
             kwargs.pop("temperature", None)
+            changed = True
+        if "reasoning_effort" in msg and "reasoning_effort" in kwargs:
+            kwargs.pop("reasoning_effort", None)
+            changed = True
+        if changed:
             return _crono(client.chat.completions.create(**kwargs))
         raise
 
