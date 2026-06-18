@@ -1507,25 +1507,15 @@ def openai_chat_completion(client, *, model, messages, max_tokens=None, temperat
             "json_schema": json_schema,
         }
 
-    # [CRONO-TEMP] cronometro de teste de modelo — REMOVER apos comparar gpt-4o-mini x gpt-5-mini
-    _t0 = time_now()
-
-    def _crono(_result):
-        try:
-            print(f"[CRONO] chat modelo={model}: {time_now() - _t0:.2f}s")
-        except Exception:
-            pass
-        return _result
-
     try:
-        return _crono(client.chat.completions.create(**kwargs))
+        return client.chat.completions.create(**kwargs)
     except TypeError:
         # SDK mais antiga pode não conhecer kwargs novos — remove e tenta de novo.
         kwargs.pop("safety_identifier", None)
         kwargs.pop("reasoning_effort", None)
         if "max_completion_tokens" in kwargs:
             kwargs["max_tokens"] = kwargs.pop("max_completion_tokens")
-        return _crono(client.chat.completions.create(**kwargs))
+        return client.chat.completions.create(**kwargs)
     except Exception as e:
         # Retry defensivo: remove o parâmetro que o modelo rejeitou (400) e reenvia.
         msg = str(e).lower()
@@ -1537,7 +1527,7 @@ def openai_chat_completion(client, *, model, messages, max_tokens=None, temperat
             kwargs.pop("reasoning_effort", None)
             changed = True
         if changed:
-            return _crono(client.chat.completions.create(**kwargs))
+            return client.chat.completions.create(**kwargs)
         raise
 
 
