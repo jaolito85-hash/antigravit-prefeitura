@@ -1844,6 +1844,35 @@ def mascarar_telefone(jid: str) -> str:
     return '****'
 
 
+def enviar_presenca_digitando(remote_jid: str, segundos: int = 6) -> None:
+    """Mostra o indicador 'digitando…' no WhatsApp do cidadão.
+
+    Usa o endpoint de presença da Evolution API (presence=composing) para exibir as
+    'bolinhas' enquanto a Clara processa a resposta, dando ao cidadão a certeza de que
+    será atendido. É best-effort: deve rodar em background (thread) e qualquer falha é
+    engolida, pois NUNCA pode atrasar nem impedir o envio da resposta real.
+
+    `segundos`: por quanto tempo manter o indicador. A Evolution envia 'composing',
+    aguarda esse tempo e depois 'paused'. ~6s cobre o processamento de IA; se a resposta
+    chega antes, o próprio WhatsApp limpa o indicador ao entregar a mensagem.
+    """
+    if not EVOLUTION_API_URL or not EVOLUTION_API_KEY or not EVOLUTION_INSTANCE_NAME:
+        return
+
+    url = f"{EVOLUTION_API_URL}/chat/sendPresence/{EVOLUTION_INSTANCE_NAME}"
+    headers = {
+        "apikey": EVOLUTION_API_KEY,
+        "Content-Type": "application/json"
+    }
+    payload = {"number": remote_jid, "presence": "composing", "delay": segundos * 1000}
+    try:
+        # timeout > delay: a Evolution mantém a conexão aberta durante o "delay"
+        requests.post(url, json=payload, headers=headers, timeout=segundos + 5)
+    except Exception as e:
+        # Falhar aqui é inofensivo — o cidadão só não vê as bolinhas, mas é respondido.
+        print(f"[PRESENCE] Falha ao enviar 'digitando' para {mascarar_telefone(remote_jid)}: {e}")
+
+
 def send_whatsapp_message(remote_jid, message):
     """Envia mensagem de texto via Evolution API com retry."""
     if not EVOLUTION_API_URL or not EVOLUTION_API_KEY or not EVOLUTION_INSTANCE_NAME:
@@ -4038,6 +4067,12 @@ def webhook(event_type=None):
                     print(f"[AUDIO] Using native transcription from Evolution: {native_transcription}")
                     text = native_transcription
                 else:
+                    # Transcrição via Whisper (download + IA) leva alguns segundos: mostra
+                    # 'digitando…' já aqui para o cidadão saber que o áudio foi recebido e
+                    # está sendo processado. Fire-and-forget, não bloqueia a transcrição.
+                    threading.Thread(
+                        target=enviar_presenca_digitando, args=(remote_jid,), daemon=True
+                    ).start()
                     print(f"[AUDIO] Manual transcription required for {seconds}s audio...")
                     import base64
                     audio_data = None
@@ -4190,6 +4225,16 @@ def webhook(event_type=None):
                 if msg_hash in existing_hashes:
                     print(f"[CACHE] Ignored Duplicate message")
                     return jsonify({"status": "ignored_duplicate"}), 200
+
+                # --- DIGITANDO… ---
+                # A partir daqui vem o trecho lento (pré-filtro IA + análise + geração da
+                # resposta). Já passamos por todos os filtros que retornam em silêncio
+                # (curta, emoji, duplicata), então daqui pra frente a Clara SEMPRE responde:
+                # é o momento certo de mostrar as 'bolinhas' pro cidadão. Fire-and-forget
+                # numa thread daemon para não somar latência à resposta (worker único).
+                threading.Thread(
+                    target=enviar_presenca_digitando, args=(remote_jid,), daemon=True
+                ).start()
 
                 # --- PRÉ-FILTRO IA (backup para o que escapou dos filtros de texto) ---
                 ai_moderation = check_message_with_ai(text, is_prefeitura=True, remote_jid=remote_jid)
