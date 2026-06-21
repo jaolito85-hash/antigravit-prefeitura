@@ -2,6 +2,7 @@ import os
 import requests
 import json
 import hashlib
+import hmac
 import csv
 import re
 import threading
@@ -30,11 +31,30 @@ app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 # nunca deve trafegar em conexao nao cifrada.
 app.config['SESSION_COOKIE_SECURE'] = True
 
-# Webhook Secret (Evolution API deve enviar este header)
+# --- Validação de origem do webhook (Evolution API) ---
+# Rollout em 2 estágios para NUNCA derrubar o recebimento em produção:
+#   1) Defina WEBHOOK_SECRET no Coolify e configure a Evolution para enviá-lo.
+#      Enquanto WEBHOOK_SECRET_ENFORCE estiver desligado, o webhook apenas
+#      REGISTRA (log) se o secret bateu — e aceita tudo (200). Isso valida, no
+#      tráfego real, que a Evolution está mandando o header certo, sem risco de 401.
+#   2) Quando os logs "[WEBHOOK-AUTH] match" confirmarem, ligue
+#      WEBHOOK_SECRET_ENFORCE=true. A partir daí, request sem o secret correto = 401.
+# Rollback a qualquer momento = remover WEBHOOK_SECRET_ENFORCE (volta a só auditar).
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
+WEBHOOK_SECRET_ENFORCE = os.getenv("WEBHOOK_SECRET_ENFORCE", "").strip().lower() in ("1", "true", "yes", "on")
+
+# Headers onde a Evolution pode mandar o segredo. A ordem é a prioridade de leitura.
+# Use o log de auditoria para descobrir qual a Evolution realmente envia.
+WEBHOOK_SECRET_HEADERS = ("X-Webhook-Secret", "apikey", "Authorization", "X-Api-Key")
+
 if not WEBHOOK_SECRET:
     print("[SEGURANCA] AVISO: WEBHOOK_SECRET nao configurado — webhook aceitara qualquer request.")
-    print("[SEGURANCA] Configure WEBHOOK_SECRET no .env para validar a origem das requisicoes.")
+    print("[SEGURANCA] Configure WEBHOOK_SECRET no .env/Coolify para validar a origem das requisicoes.")
+elif not WEBHOOK_SECRET_ENFORCE:
+    print("[SEGURANCA] WEBHOOK_SECRET configurado em MODO AUDITORIA — ainda aceita tudo.")
+    print("[SEGURANCA] Confira os logs '[WEBHOOK-AUTH] match' e depois ligue WEBHOOK_SECRET_ENFORCE=true.")
+else:
+    print("[SEGURANCA] WEBHOOK_SECRET ATIVO (enforce) — requests sem o secret correto recebem 401.")
 
 # --- Concorrência (Gunicorn roda com 1 worker e 4 threads — ver Dockerfile) ---
 # O estado em memória abaixo é compartilhado entre as 4 threads e precisa de serialização.
@@ -3928,16 +3948,79 @@ Escreva a resposta da Clara agora."""
         return "Já adicionei essa informação ao seu chamado. Encaminhei para análise da equipe responsável."
 
 
+def _mascarar_segredo(valor: str) -> str:
+    """Mascara um valor sensível para log — nunca expõe o segredo inteiro."""
+    if not valor:
+        return "(vazio)"
+    if len(valor) <= 4:
+        return f"(len={len(valor)})"
+    return f"{valor[:2]}***{valor[-2:]} (len={len(valor)})"
+
+
+def _extrair_webhook_secret(headers) -> str:
+    """Lê o secret recebido no primeiro header candidato presente.
+    Aceita o formato 'Bearer <token>' no header Authorization."""
+    for nome in WEBHOOK_SECRET_HEADERS:
+        valor = headers.get(nome)
+        if valor:
+            valor = valor.strip()
+            if nome.lower() == "authorization" and valor.lower().startswith("bearer "):
+                valor = valor[7:].strip()
+            return valor
+    return ""
+
+
+def validar_origem_webhook(headers) -> tuple:
+    """Valida a origem do webhook conforme o estágio de rollout.
+
+    Retorna (autorizado: bool, motivo: str).
+    - Sem WEBHOOK_SECRET: autoriza (compatível com hoje).
+    - Com WEBHOOK_SECRET mas SEM enforce: modo auditoria — sempre autoriza,
+      apenas registra no log se o secret recebido bateu (descobre o header certo
+      no tráfego real, sem risco de 401).
+    - Com enforce ligado: rejeita quem não mandar o secret correto.
+    """
+    if not WEBHOOK_SECRET:
+        return True, "secret_nao_configurado"
+
+    recebido = _extrair_webhook_secret(headers)
+    # compare_digest evita timing attack e lida com string vazia com segurança.
+    bateu = bool(recebido) and hmac.compare_digest(recebido, WEBHOOK_SECRET)
+
+    if not WEBHOOK_SECRET_ENFORCE:
+        # Modo auditoria: nunca derruba o recebimento; só ensina o que a Evolution manda.
+        if bateu:
+            print("[WEBHOOK-AUTH] match (modo auditoria) — secret recebido confere")
+        else:
+            presentes = [n for n in WEBHOOK_SECRET_HEADERS if headers.get(n)]
+            if presentes:
+                print(f"[WEBHOOK-AUTH] MISMATCH (auditoria, aceito) — header de auth presente "
+                      f"mas valor diferente: {presentes} recebido={_mascarar_segredo(recebido)}")
+            else:
+                # Nenhum header candidato veio: lista os nomes recebidos para descobrir onde
+                # a Evolution coloca o segredo (apenas nomes, nunca valores).
+                try:
+                    nomes = sorted(headers.keys())
+                except Exception:
+                    nomes = list(headers)
+                print(f"[WEBHOOK-AUTH] MISMATCH (auditoria, aceito) — nenhum header de auth "
+                      f"conhecido. Headers recebidos: {nomes}")
+        return True, "match" if bateu else "audit_mismatch"
+
+    if not bateu:
+        return False, "secret_invalido"
+    return True, "match"
+
+
 @app.route("/webhook", methods=["POST"])
 @app.route("/webhook/<path:event_type>", methods=["POST"])
 def webhook(event_type=None):
     print(f"[WEBHOOK] Requisicao recebida! Path: /webhook/{event_type or ''} IP: {request.remote_addr}")
-    # Validação de origem do webhook
-    if WEBHOOK_SECRET:
-        incoming_secret = request.headers.get("X-Webhook-Secret") or request.headers.get("apikey") or ""
-        if incoming_secret != WEBHOOK_SECRET:
-            print(f"[WEBHOOK] REJEITADO: secret invalido")
-            return jsonify({"error": "unauthorized"}), 401
+    # Validação de origem do webhook (config + rollout em 2 estágios no topo do arquivo)
+    autorizado, motivo = validar_origem_webhook(request.headers)
+    if not autorizado:
+        print(f"[WEBHOOK] REJEITADO: {motivo}")
+        return jsonify({"error": "unauthorized"}), 401
 
     try:
         data = request.json
@@ -4933,7 +5016,12 @@ def debug_webhook_check():
 
     result = {
         "server_webhook_route": "/webhook and /webhook/<event>",
-        "webhook_secret_configured": bool(os.getenv("WEBHOOK_SECRET", "")),
+        "webhook_secret_configured": bool(WEBHOOK_SECRET),
+        "webhook_secret_enforced": WEBHOOK_SECRET_ENFORCE,
+        "webhook_secret_mode": (
+            "enforce" if (WEBHOOK_SECRET and WEBHOOK_SECRET_ENFORCE)
+            else "audit" if WEBHOOK_SECRET else "open"
+        ),
         "evolution_url": evo_url[:30] + "..." if len(evo_url) > 30 else evo_url,
         "evolution_instance": evo_instance,
     }
