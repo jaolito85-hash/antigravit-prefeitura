@@ -102,6 +102,7 @@ def ja_processado(msg_id):
 # Lock para o rate-limit GLOBAL e para escrita de arquivos JSON compartilhados.
 _global_rate_lock = threading.Lock()
 _json_write_lock = threading.Lock()
+_pending_lock = threading.Lock()  # serializa o buffer local de demandas não sincronizadas
 
 # Config
 EVOLUTION_API_URL = os.getenv("EVOLUTION_API_URL")
@@ -1049,40 +1050,156 @@ def record_agent_reply(feedback_id, current_message, reply):
         'updated_at': datetime.utcnow().isoformat()
     })
 
-def save_feedback(feedback_data):
-    """Save feedback to Supabase or local JSON"""
-    # Normalize keys to match Supabase column names
+# --- Persistência de feedbacks (id e protocolo vêm do banco) ---
+# O id é a coluna identity do Postgres; nunca é calculado na aplicação (evita
+# corrida/colisão entre cidadãos). Quando o Supabase oscila, a demanda vai para
+# um buffer local com ALERTA crítico e é reenviada (reconciliada) assim que o
+# banco volta — uma reclamação NUNCA pode sumir calada.
+
+def montar_protocolo(feedback_id) -> str:
+    """Monta o protocolo a partir do id do banco (ano + id). Formato único."""
+    return f"{datetime.utcnow().year}{int(feedback_id):04d}"
+
+
+def _local_next_id(feedbacks) -> int:
+    """Próximo id para o buffer local: maior id existente + 1 (nunca colide)."""
+    maior = 0
+    for fb in feedbacks:
+        try:
+            maior = max(maior, int(fb.get('id') or 0))
+        except (ValueError, TypeError):
+            continue
+    return maior + 1
+
+
+def contar_pendentes() -> int:
+    """Quantas demandas estão só no buffer local, aguardando sincronizar."""
+    if not os.path.exists(EVENTS_FILE):
+        return 0
+    return sum(1 for fb in load_json(EVENTS_FILE, []) if fb.get('pending_sync'))
+
+
+def _salvar_feedback_local(data, motivo) -> dict:
+    """Grava no buffer local quando o Supabase falha — e ALERTA.
+
+    O cidadão recebeu protocolo, então a Prefeitura precisa enxergar a demanda.
+    O log crítico aparece no Coolify e o /api/health passa a sinalizar pendência
+    para o CRM disparar alerta. NÃO é durável entre deploys (container efêmero):
+    por isso a urgência de recuperar antes do próximo deploy.
+    """
+    with _pending_lock:
+        feedbacks = load_json(EVENTS_FILE, [])
+        local_id = data.get('id') or _local_next_id(feedbacks)
+        data['id'] = local_id
+        protocolo = data.get('protocol') or montar_protocolo(local_id)
+        data['protocol'] = protocolo
+        data['pending_sync'] = True
+        data['failed_at'] = datetime.utcnow().isoformat()
+        feedbacks.insert(0, data)
+        save_json(EVENTS_FILE, feedbacks)
+        pendentes = sum(1 for fb in feedbacks if fb.get('pending_sync'))
+    print(f"🚨 [DEMANDA-NAO-SINCRONIZADA] Supabase fora ({motivo}). Feedback de "
+          f"{mascarar_telefone(data.get('sender'))} salvo SO no buffer local "
+          f"(protocolo #{protocolo}). Pendentes: {pendentes}. RECUPERAR antes do proximo deploy!")
+    return {"id": local_id, "protocol": protocolo, "synced": False}
+
+
+def flush_pending_feedbacks(sb=None, limite=50) -> int:
+    """Reenvia ao Supabase as demandas que ficaram no buffer durante um outage.
+
+    Best-effort, limitado e com lock não-bloqueante (não segura a thread do
+    webhook). Preserva o protocolo já informado ao cidadão; o banco gera novo id.
+    """
+    if not os.path.exists(EVENTS_FILE):
+        return 0
+    if not _pending_lock.acquire(blocking=False):
+        return 0  # outra thread já está reconciliando
+    try:
+        feedbacks = load_json(EVENTS_FILE, [])
+        pendentes = [fb for fb in feedbacks if fb.get('pending_sync')]
+        if not pendentes:
+            return 0
+        sb = sb or get_supabase()
+        if not sb:
+            return 0
+        reenviados = 0
+        for fb in pendentes[:limite]:
+            # Deixa o banco gerar novo id; mantém o protocolo já dado ao cidadão.
+            payload = {k: v for k, v in fb.items()
+                       if k not in ('pending_sync', 'failed_at', 'id', '_synced')}
+            try:
+                resp = sb.table('feedbacks').insert(payload).execute()
+                if resp.data:
+                    fb['_synced'] = True
+                    reenviados += 1
+                else:
+                    break
+            except Exception as e:
+                print(f"[RECONCILIACAO] Falha ao reenviar protocolo #{fb.get('protocol')}: {e}")
+                break  # banco oscilando — para e tenta na próxima
+        if reenviados:
+            restantes = [fb for fb in feedbacks if not fb.pop('_synced', False)]
+            save_json(EVENTS_FILE, restantes)
+            print(f"✅ [RECONCILIACAO] {reenviados} demanda(s) pendente(s) reenviada(s) ao Supabase.")
+        return reenviados
+    finally:
+        _pending_lock.release()
+
+
+def save_feedback(feedback_data) -> dict:
+    """Insere um feedback NOVO e devolve {'id', 'protocol', 'synced'}.
+
+    O id vem da coluna identity do Postgres e é LIDO de volta do insert — nunca
+    calculado na aplicação. Isso elimina a corrida entre cidadãos e a colisão de
+    protocolos. O protocolo é derivado do id. Se o Supabase estiver fora, cai no
+    buffer local com ALERTA (a demanda não some calada).
+    """
+    # Normaliza chaves para as colunas do Supabase
     data = feedback_data.copy()
     if 'pushName' in data:
         data['name'] = data.pop('pushName')
     if 'remoteJid' in data:
         data['sender'] = data.pop('remoteJid')
+    # Deixa o banco gerar o id (identity); protocolo é montado após o insert.
+    data.pop('id', None)
+    data.pop('protocol', None)
 
     sb = get_supabase()
-    if sb:
+    if not sb:
+        return _salvar_feedback_local(data, "cliente_indisponivel")
+
+    def _inserir(client):
+        resp = client.table('feedbacks').insert(data).execute()
+        linhas = resp.data or []
+        if not linhas or linhas[0].get('id') is None:
+            raise RuntimeError("insert nao retornou id")
+        return linhas[0]['id']
+
+    try:
+        new_id = _inserir(sb)
+    except Exception as e:
+        print(f"❌ Supabase insert error: {e}")
+        sb = _reconnect_supabase()
+        if not sb:
+            return _salvar_feedback_local(data, "reconnect_falhou")
         try:
-            sb.table('feedbacks').insert(data).execute()
-            print("✅ Supabase insert success")
-            return True
-        except Exception as e:
-            print(f"❌ Supabase insert error: {e}")
-            sb = _reconnect_supabase()
-            if sb:
-                try:
-                    sb.table('feedbacks').insert(data).execute()
-                    return True
-                except Exception as e2:
-                    print(f"Supabase insert retry failed: {e2}")
-            # Fallback to local JSON
-            feedbacks = load_json(EVENTS_FILE, [])
-            feedbacks.insert(0, data)
-            save_json(EVENTS_FILE, feedbacks)
-            return True
-    else:
-        feedbacks = load_json(EVENTS_FILE, [])
-        feedbacks.insert(0, data)
-        save_json(EVENTS_FILE, feedbacks)
-        return True
+            new_id = _inserir(sb)
+        except Exception as e2:
+            print(f"Supabase insert retry failed: {e2}")
+            return _salvar_feedback_local(data, "insert_falhou")
+
+    protocolo = montar_protocolo(new_id)
+    # Grava o protocolo na linha recém-criada. Se falhar, o card JÁ existe (a
+    # demanda não se perde) — apenas avisamos para correção do protocolo.
+    if not update_feedback(new_id, {"protocol": protocolo}):
+        print(f"⚠️ [PROTOCOLO] Card {new_id} criado mas falhou gravar protocolo #{protocolo} "
+              f"— consulta por protocolo pode falhar ate correcao.")
+
+    # Banco saudável: aproveita para reconciliar pendências de outages anteriores.
+    flush_pending_feedbacks(sb)
+
+    print(f"✅ Feedback salvo (id={new_id}, protocolo #{protocolo})")
+    return {"id": new_id, "protocol": protocolo, "synced": True}
 
 def update_feedback(feedback_id, updates):
     """Update feedback in Supabase or local JSON"""
@@ -1140,20 +1257,9 @@ def get_config():
     config["regions"] = default_regions
     return config
 
-def get_next_id():
-    """Get next ID for new feedback"""
-    sb = get_supabase()
-    if sb:
-        try:
-            response = sb.table('feedbacks').select('id').order('id', desc=True).limit(1).execute()
-            if response.data:
-                return response.data[0]['id'] + 1
-            return 1
-        except:
-            return 1
-    else:
-        feedbacks = load_json(EVENTS_FILE, [])
-        return len(feedbacks) + 1
+# NOTA: get_next_id() foi removido. O id passou a vir da coluna identity do
+# Postgres (lido do retorno do insert em save_feedback), eliminando a corrida
+# entre cidadãos e o antigo fallback "return 1" que colidia protocolos.
 
 # --- CLASSIFICATION FUNCTIONS (DETERMINISTIC - DO NOT CHANGE) ---
 
@@ -4572,9 +4678,6 @@ def webhook(event_type=None):
                     topic = text if len(text.split()) <= 3 else text[:20] + "..."
 
                 now = datetime.utcnow()
-                current_id = get_next_id()
-                current_year = datetime.now().year
-                protocol_num = f"{current_year}{current_id:04d}"
 
                 # Calcula status de localização inicial
                 _has_s, _has_n, _ = detect_location_components(text)
@@ -4582,7 +4685,8 @@ def webhook(event_type=None):
                 initial_loc_status = 'completo' if (_has_s and (_has_n or (regiao and regiao != 'N/A'))) else 'pendente'
 
                 new_report = {
-                    "id": current_id,
+                    # id e protocol são definidos pelo banco (identity) em save_feedback,
+                    # evitando corrida e colisão de protocolo entre cidadãos.
                     "sender": remote_jid,
                     "name": push_name,
                     "message": build_feedback_message(text, now.isoformat()),
@@ -4594,7 +4698,6 @@ def webhook(event_type=None):
                     "sentiment": "Positivo" if sentimento == "Positivo" else ("Negativo" if sentimento in ["Critico", "Urgente"] else "Neutro"),
                     "topic": topic,
                     "status": "aberto",
-                    "protocol": protocol_num,
                     "rua": extracted_rua,
                     "location_status": initial_loc_status,
                 }
@@ -4607,8 +4710,10 @@ def webhook(event_type=None):
                     new_report["sensitive_case"] = True
                     new_report["sensitive_reasons"] = sensitive_info["reasons"]
 
-                # Save feedback FIRST (before AI response to avoid data loss)
-                save_feedback(new_report)
+                # Salva PRIMEIRO (antes da resposta de IA) e usa o id/protocolo do banco.
+                saved = save_feedback(new_report)
+                current_id = saved["id"]
+                protocol_num = saved["protocol"]
 
                 if sensitive_info["sensitive"]:
                     reply = build_sensitive_handoff_reply(protocol_num, categoria, sensitive_info["reasons"])
@@ -5179,6 +5284,21 @@ def api_health():
         }
     except Exception as e:
         results["feedbacks"] = {"status": "error", "detail": str(e)[:120]}
+
+    # 6. DEMANDAS PENDENTES — feedbacks que não chegaram ao Supabase (outage).
+    #    Se houver, há risco de perda silenciosa: sinaliza para o CRM alertar.
+    try:
+        pendentes = contar_pendentes()
+        results["pending_sync"] = {
+            "status": "warning" if pendentes else "up",
+            "pending": pendentes,
+            "detail": (f"{pendentes} demanda(s) so no buffer local — reenviar ao Supabase"
+                       if pendentes else "Nenhuma demanda pendente"),
+        }
+        if pendentes:
+            overall = "degraded"
+    except Exception as e:
+        results["pending_sync"] = {"status": "error", "detail": str(e)[:120]}
 
     # Overall: se serviço crítico está down, tudo é down
     critical_services = ["supabase", "evolution"]
