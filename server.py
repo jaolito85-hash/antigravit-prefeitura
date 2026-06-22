@@ -994,8 +994,27 @@ def is_waiting_for_location(raw_message):
         'tambem o bairro',
         'nome do bairro',
         'nome do conjunto',
+        'rua/bairro',           # exatamente como a Clara costuma perguntar
+        'rua ou bairro',
+        'rua e o bairro',
+        'rua e bairro',
+        'rua e o conjunto',
+        'onde ocorreu',
+        'onde foi',
+        'onde fica',
+        'qual a rua',
+        'qual o bairro',
+        'local da ocorrencia',
     )
-    return any(prompt in last_agent for prompt in location_prompts)
+    if any(prompt in last_agent for prompt in location_prompts):
+        return True
+    # Rede de segurança: qualquer PERGUNTA da Clara que cite rua/bairro/endereço/
+    # local/conjunto conta como pedido de localização (cobre fraseados novos).
+    if last_agent.rstrip().endswith('?') and re.search(
+        r'\b(rua|bairro|endereco|local|conjunto)\b', last_agent
+    ):
+        return True
+    return False
 
 def detect_location_components(text):
     """Retorna (tem_rua, tem_bairro, regiao_detectada).
@@ -1070,12 +1089,25 @@ def extract_street_from_text(text: str):
 
 def build_location_followup_reply(has_street, has_neighborhood):
     if has_street and has_neighborhood:
-        return "Muito obrigado! Seu chamado já foi registrado."
+        # Curto de propósito: a assinatura (anexada depois) já diz "obrigado/registrado".
+        return "Perfeito, anotei o endereço!"
     if has_street and not has_neighborhood:
-        return "Muito obrigado! Para concluir o registro, poderia me informar também o bairro?"
+        return "Obrigado! Para concluir o registro, poderia me informar também o bairro?"
     if has_neighborhood and not has_street:
-        return "Muito obrigado! Para concluir o registro, poderia me informar também a rua?"
-    return "Muito obrigado! Para concluir o registro, preciso da rua e do bairro."
+        return "Obrigado! Para concluir o registro, poderia me informar também a rua?"
+    return "Obrigado! Para concluir o registro, preciso da rua e do bairro."
+
+
+def anexar_protocolo_se_completo(reply, active_feedback, novo_status_loc):
+    """Anexa protocolo + assinatura quando a localização ACABOU de completar e o
+    protocolo ainda não foi enviado neste chamado. Caso contrário, devolve o reply
+    sem alteração (evita repetir o protocolo em mensagens seguintes)."""
+    protocolo = active_feedback.get('protocol')
+    if novo_status_loc != 'completo' or not protocolo:
+        return reply
+    if str(protocolo) in (active_feedback.get('message') or ''):
+        return reply  # já enviado antes neste chamado
+    return formatar_resposta_com_protocolo(reply, protocolo)
 
 def serialize_feedback_for_api(feedback):
     data = dict(feedback)
@@ -4739,15 +4771,16 @@ def webhook(event_type=None):
                         if is_location_decline(text):
                             # Se já tem ao menos região/bairro, considera suficiente
                             if current_region and current_region != 'N/A':
-                                reply = "Tudo bem! Já temos o bairro registrado. Sua reclamação está anotada e a equipe irá analisar."
+                                reply = "Tudo bem, o bairro já está registrado!"
                             else:
-                                reply = "Tudo bem, sem problema! Sua reclamação já está registrada e nossa equipe irá analisar assim que possível."
+                                reply = "Tudo bem, sem problema!"
                             append_to_feedback(
                                 active_feedback['id'],
                                 active_feedback['message'],
                                 text,
                                 new_location_status='completo',
                             )
+                            reply = anexar_protocolo_se_completo(reply, active_feedback, 'completo')
                             send_whatsapp_message(remote_jid, reply)
                             current_message = append_conversation_entry(active_feedback['message'], 'client', text)
                             record_agent_reply(active_feedback['id'], current_message, reply)
@@ -4769,7 +4802,7 @@ def webhook(event_type=None):
                         if effective_has_hood and not effective_has_street:
                             extracted_rua = None
                             new_loc_status = 'completo'
-                            reply = "Obrigado! Já registrei o bairro. Sua reclamação está anotada e a equipe responsável irá verificar."
+                            reply = "Perfeito, registrei o bairro!"
                             append_to_feedback(
                                 active_feedback['id'],
                                 active_feedback['message'],
@@ -4779,6 +4812,7 @@ def webhook(event_type=None):
                                 new_rua=None,
                                 new_location_status=new_loc_status,
                             )
+                            reply = anexar_protocolo_se_completo(reply, active_feedback, new_loc_status)
                             send_whatsapp_message(remote_jid, reply)
                             current_message = append_conversation_entry(active_feedback['message'], 'client', text)
                             record_agent_reply(active_feedback['id'], current_message, reply)
@@ -4801,6 +4835,7 @@ def webhook(event_type=None):
                         )
 
                         reply = build_location_followup_reply(effective_has_street, effective_has_hood)
+                        reply = anexar_protocolo_se_completo(reply, active_feedback, new_loc_status)
                         send_whatsapp_message(remote_jid, reply)
                         current_message = append_conversation_entry(active_feedback['message'], 'client', text)
                         record_agent_reply(active_feedback['id'], current_message, reply)
