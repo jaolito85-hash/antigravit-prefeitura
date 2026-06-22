@@ -116,6 +116,29 @@ class WebhookOriginValidationTest(unittest.TestCase):
         self.assertTrue(ok)
         self.assertEqual(motivo, "match")
 
+    # --- Secret via query string (Evolution não envia headers) ---
+    def test_le_secret_da_query_token(self):
+        server.WEBHOOK_SECRET = "supersecreto"
+        server.WEBHOOK_SECRET_ENFORCE = True
+        ok, motivo = server.validar_origem_webhook({}, {"token": "supersecreto"})
+        self.assertTrue(ok)
+        self.assertEqual(motivo, "match")
+
+    def test_query_tolera_barra_no_final(self):
+        # A Evolution pode acrescentar '/' ao fim da URL configurada.
+        server.WEBHOOK_SECRET = "supersecreto"
+        server.WEBHOOK_SECRET_ENFORCE = True
+        ok, motivo = server.validar_origem_webhook({}, {"token": "supersecreto/"})
+        self.assertTrue(ok)
+        self.assertEqual(motivo, "match")
+
+    def test_enforce_rejeita_query_errada(self):
+        server.WEBHOOK_SECRET = "supersecreto"
+        server.WEBHOOK_SECRET_ENFORCE = True
+        ok, motivo = server.validar_origem_webhook({}, {"token": "errado"})
+        self.assertFalse(ok)
+        self.assertEqual(motivo, "secret_invalido")
+
     # --- Máscara nunca vaza o segredo inteiro ---
     def test_mascara_nao_expoe_segredo_inteiro(self):
         mascarado = server._mascarar_segredo("supersecreto")

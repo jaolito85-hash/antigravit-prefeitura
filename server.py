@@ -46,6 +46,10 @@ WEBHOOK_SECRET_ENFORCE = os.getenv("WEBHOOK_SECRET_ENFORCE", "").strip().lower()
 # Headers onde a Evolution pode mandar o segredo. A ordem é a prioridade de leitura.
 # Use o log de auditoria para descobrir qual a Evolution realmente envia.
 WEBHOOK_SECRET_HEADERS = ("X-Webhook-Secret", "apikey", "Authorization", "X-Api-Key")
+# Parâmetros de URL aceitos como secret. Necessário porque a Evolution de Ivaté
+# NÃO envia headers customizados — só dá pra configurar a URL do webhook. Então
+# o segredo vai como ?token=... na própria URL (a app NÃO loga a query string).
+WEBHOOK_SECRET_QUERY_PARAMS = ("token", "secret", "apikey", "key")
 
 if not WEBHOOK_SECRET:
     print("[SEGURANCA] AVISO: WEBHOOK_SECRET nao configurado — webhook aceitara qualquer request.")
@@ -4063,54 +4067,65 @@ def _mascarar_segredo(valor: str) -> str:
     return f"{valor[:2]}***{valor[-2:]} (len={len(valor)})"
 
 
-def _extrair_webhook_secret(headers) -> str:
-    """Lê o secret recebido no primeiro header candidato presente.
-    Aceita o formato 'Bearer <token>' no header Authorization."""
+def _extrair_webhook_secret(headers, args=None) -> str:
+    """Lê o secret do primeiro header candidato; se não houver, da query string.
+
+    Aceita 'Bearer <token>' no Authorization. Remove espaços e barra final — a
+    Evolution pode acrescentar '/' ao fim da URL configurada.
+    """
     for nome in WEBHOOK_SECRET_HEADERS:
         valor = headers.get(nome)
         if valor:
             valor = valor.strip()
             if nome.lower() == "authorization" and valor.lower().startswith("bearer "):
                 valor = valor[7:].strip()
-            return valor
+            return valor.rstrip("/")
+    if args:
+        for nome in WEBHOOK_SECRET_QUERY_PARAMS:
+            valor = args.get(nome)
+            if valor:
+                return valor.strip().rstrip("/")
     return ""
 
 
-def validar_origem_webhook(headers) -> tuple:
+def validar_origem_webhook(headers, args=None) -> tuple:
     """Valida a origem do webhook conforme o estágio de rollout.
 
-    Retorna (autorizado: bool, motivo: str).
+    Retorna (autorizado: bool, motivo: str). O secret pode vir num header OU na
+    query string (?token=...), já que a Evolution de Ivaté não envia headers.
     - Sem WEBHOOK_SECRET: autoriza (compatível com hoje).
     - Com WEBHOOK_SECRET mas SEM enforce: modo auditoria — sempre autoriza,
-      apenas registra no log se o secret recebido bateu (descobre o header certo
-      no tráfego real, sem risco de 401).
+      apenas registra no log se o secret bateu (valida no tráfego real, sem 401).
     - Com enforce ligado: rejeita quem não mandar o secret correto.
     """
     if not WEBHOOK_SECRET:
         return True, "secret_nao_configurado"
 
-    recebido = _extrair_webhook_secret(headers)
+    recebido = _extrair_webhook_secret(headers, args)
     # compare_digest evita timing attack e lida com string vazia com segurança.
     bateu = bool(recebido) and hmac.compare_digest(recebido, WEBHOOK_SECRET)
 
     if not WEBHOOK_SECRET_ENFORCE:
-        # Modo auditoria: nunca derruba o recebimento; só ensina o que a Evolution manda.
+        # Modo auditoria: nunca derruba o recebimento; só mostra o que chega.
         if bateu:
             print("[WEBHOOK-AUTH] match (modo auditoria) — secret recebido confere")
         else:
-            presentes = [n for n in WEBHOOK_SECRET_HEADERS if headers.get(n)]
-            if presentes:
-                print(f"[WEBHOOK-AUTH] MISMATCH (auditoria, aceito) — header de auth presente "
-                      f"mas valor diferente: {presentes} recebido={_mascarar_segredo(recebido)}")
+            h_presentes = [n for n in WEBHOOK_SECRET_HEADERS if headers.get(n)]
+            q_presentes = [n for n in WEBHOOK_SECRET_QUERY_PARAMS if args and args.get(n)]
+            if h_presentes or q_presentes:
+                print(f"[WEBHOOK-AUTH] MISMATCH (auditoria, aceito) — credencial presente mas "
+                      f"valor diferente. headers={h_presentes} query={q_presentes} "
+                      f"recebido={_mascarar_segredo(recebido)}")
             else:
-                # Nenhum header candidato veio: lista os nomes recebidos para descobrir onde
-                # a Evolution coloca o segredo (apenas nomes, nunca valores).
+                # Nenhuma credencial conhecida: lista os nomes recebidos (sem valores)
+                # para descobrir onde a Evolution coloca o segredo.
                 try:
                     nomes = sorted(headers.keys())
                 except Exception:
                     nomes = list(headers)
-                print(f"[WEBHOOK-AUTH] MISMATCH (auditoria, aceito) — nenhum header de auth "
-                      f"conhecido. Headers recebidos: {nomes}")
+                qnomes = sorted(args.keys()) if args else []
+                print(f"[WEBHOOK-AUTH] MISMATCH (auditoria, aceito) — nenhuma credencial conhecida. "
+                      f"Headers: {nomes} Query: {qnomes}")
         return True, "match" if bateu else "audit_mismatch"
 
     if not bateu:
@@ -4123,7 +4138,7 @@ def validar_origem_webhook(headers) -> tuple:
 def webhook(event_type=None):
     print(f"[WEBHOOK] Requisicao recebida! Path: /webhook/{event_type or ''} IP: {request.remote_addr}")
     # Validação de origem do webhook (config + rollout em 2 estágios no topo do arquivo)
-    autorizado, motivo = validar_origem_webhook(request.headers)
+    autorizado, motivo = validar_origem_webhook(request.headers, request.args)
     if not autorizado:
         print(f"[WEBHOOK] REJEITADO: {motivo}")
         return jsonify({"error": "unauthorized"}), 401
