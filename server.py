@@ -811,24 +811,59 @@ def save_json(filepath, data):
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
+# --- NÚMEROS DE TESTE (ocultos do painel da Prefeitura) ---
+# Mensagens desses números são atendidas normalmente pela Clara (resposta real,
+# threading, protocolo) e o card É salvo no banco — mas NÃO aparece em nenhuma
+# tela do painel (lista, gráficos, IA, métricas, exports), porque tudo passa por
+# get_feedbacks(). Permite testar o bot em produção sem poluir o painel.
+# Configure via env TEST_NUMBERS (separados por vírgula). O casamento é pelos
+# ÚLTIMOS 8 DÍGITOS — tolera o 9º dígito que o WhatsApp às vezes omite e os
+# prefixos de país/DDD (ex.: 44991546866 casa com 554491546866@s.whatsapp.net).
+def _so_digitos(valor):
+    return re.sub(r"\D", "", valor or "")
+
+TEST_NUMBERS_SUFIXOS = {
+    _so_digitos(n)[-8:]
+    for n in os.getenv("TEST_NUMBERS", "").split(",")
+    if len(_so_digitos(n)) >= 8
+}
+if TEST_NUMBERS_SUFIXOS:
+    print(f"[TESTE] {len(TEST_NUMBERS_SUFIXOS)} numero(s) de teste serao ocultados do painel da Prefeitura.")
+
+
+def is_test_number(sender):
+    """True se o remetente é um número de teste (atendido, mas oculto do painel)."""
+    if not TEST_NUMBERS_SUFIXOS:
+        return False
+    suf = _so_digitos(sender)[-8:]
+    return bool(suf) and suf in TEST_NUMBERS_SUFIXOS
+
+
+def _ocultar_numeros_teste(feedbacks):
+    """Remove da listagem do painel os cards vindos de números de teste."""
+    if not TEST_NUMBERS_SUFIXOS or not feedbacks:
+        return feedbacks
+    return [f for f in feedbacks if not is_test_number(f.get('sender'))]
+
+
 def get_feedbacks():
-    """Get feedbacks from Supabase or local JSON"""
+    """Get feedbacks from Supabase or local JSON (oculta números de teste)."""
     sb = get_supabase()
     if sb:
         try:
             response = sb.table('feedbacks').select('*').order('updated_at', desc=True).execute()
-            return response.data
+            return _ocultar_numeros_teste(response.data)
         except Exception as e:
             print(f"Supabase error: {e}")
             sb = _reconnect_supabase()
             if sb:
                 try:
                     response = sb.table('feedbacks').select('*').order('updated_at', desc=True).execute()
-                    return response.data
+                    return _ocultar_numeros_teste(response.data)
                 except Exception as e2:
                     print(f"Supabase retry failed: {e2}")
-            return load_json(EVENTS_FILE, [])
-    return load_json(EVENTS_FILE, [])
+            return _ocultar_numeros_teste(load_json(EVENTS_FILE, []))
+    return _ocultar_numeros_teste(load_json(EVENTS_FILE, []))
 
 CONVERSATION_MARKER_RE = re.compile(
     r"\[\[(CLIENT|AGENT|OPERATOR)\|([^\]]+)\]\]\n([\s\S]*?)(?=\n\n\[\[(?:CLIENT|AGENT|OPERATOR)\||\Z)"
