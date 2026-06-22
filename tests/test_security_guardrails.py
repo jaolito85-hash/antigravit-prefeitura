@@ -61,7 +61,7 @@ class ClaraSecurityGuardrailsTest(unittest.TestCase):
     def test_sensitive_handoff_reply_is_neutral_and_does_not_promise_action(self):
         reply = server.build_sensitive_handoff_reply("20260001", "Seguranca Publica")
 
-        self.assertIn("#20260001", reply)
+        self.assertIn("*20260001*", reply)  # protocolo em negrito (novo formato)
         self.assertIn("encaminhei para analise", server.normalize_text(reply))
         self.assertNotIn("acionada", server.normalize_text(reply))
         self.assertNotIn("resolvido", server.normalize_text(reply))
@@ -174,7 +174,7 @@ class ClaraSecurityGuardrailsTest(unittest.TestCase):
                     remote_jid="554499999999@s.whatsapp.net",
                 )
 
-        self.assertIn("#20260042", reply)
+        self.assertIn("*20260042*", reply)  # protocolo em negrito (novo formato)
 
 
 if __name__ == "__main__":

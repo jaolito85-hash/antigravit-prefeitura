@@ -798,7 +798,7 @@ def responder_consulta_protocolo(remote_jid: str, text: str) -> dict | None:
         complemento = '\n\nSua solicitação está na fila e será analisada em breve.'
 
     reply = (
-        f"{emoji} *Protocolo #{protocol_num}*\n\n"
+        f"{emoji} *Protocolo {protocol_num}*\n\n"
         f"📌 Categoria: {categoria}\n"
         f"📊 Status: *{status_label}*"
         f"{local}"
@@ -1714,15 +1714,29 @@ def extract_response_text(response):
     return (content or "").strip()
 
 
-def ensure_protocol_in_reply(reply, protocol_num):
-    """Garante que uma demanda registrada informe o protocolo, mesmo se a IA omitir."""
-    reply = (reply or "").strip()
-    if not protocol_num or re.search(rf"#?\s*{re.escape(str(protocol_num))}\b", reply):
-        return reply
-    suffix = f" Protocolo #{protocol_num}."
-    if not reply:
-        return f"Recebi sua solicitação e registrei o protocolo #{protocol_num}."
-    return f"{reply.rstrip()} {suffix.strip()}"
+# --- FORMATO DAS MENSAGENS AO CIDADÃO ---
+# Mensagem bonita e espaçada (estilo da referência): corpo empático, depois o
+# protocolo em bloco próprio com NEGRITO, depois a assinatura — tudo separado por
+# linha em branco. No WhatsApp, negrito = *texto*. O protocolo vai SEM '#' (o '#'
+# vira link/hashtag verde no app); a consulta aceita o número solto, então ok.
+ASSINATURA_RODAPE = os.getenv(
+    "ASSINATURA_BOT",
+    "Muito obrigado! Seu chamado já foi registrado. Ivaté agradece sua participação."
+)
+
+
+def formatar_resposta_com_protocolo(corpo, protocol_num, com_assinatura=True):
+    """Monta a mensagem final: corpo + bloco de protocolo (negrito) + assinatura,
+    separados por linha em branco. Substitui o antigo ensure_protocol_in_reply."""
+    corpo = (corpo or "").strip()
+    partes = []
+    if corpo:
+        partes.append(corpo)
+    if protocol_num:
+        partes.append(f"📋 Protocolo:\n*{protocol_num}*")
+    if com_assinatura and ASSINATURA_RODAPE:
+        partes.append(ASSINATURA_RODAPE)
+    return "\n\n".join(partes)
 
 
 # --- FILTRO DE SAÍDA DA IA (defesa pós-geração) ---
@@ -1926,11 +1940,12 @@ def build_sensitive_handoff_reply(protocol_num, category, reasons=None):
     emergency_note = ""
     if any(r in reasons for r in ("seguranca_publica", "saude_grave", "abuso_sexual")):
         emergency_note = " Se houver risco imediato, acione tambem 190 (Policia Militar), 192 (SAMU) ou 193 (Bombeiros)."
-    return (
-        f"Recebi sua mensagem e registrei o protocolo #{protocol_num}. "
-        f"Por ser uma situacao sensivel, encaminhei para analise da equipe responsavel de {category}. "
-        f"Um atendente humano vai acompanhar esse caso.{emergency_note}"
+    corpo = (
+        f"Recebi sua mensagem. Por ser uma situacao sensivel, encaminhei para analise "
+        f"da equipe responsavel de {category}. Um atendente humano vai acompanhar esse caso.{emergency_note}"
     )
+    # Caso sensível: bloco de protocolo em negrito, mas SEM a assinatura alegre (tom sério).
+    return formatar_resposta_com_protocolo(corpo, protocol_num, com_assinatura=False)
 
 
 # --- AI CLASSIFICATION FALLBACK ---
@@ -2012,7 +2027,7 @@ def generate_ai_response(text, category, urgency, protocol_num, location_status=
     """Gera resposta da Clara - atendente virtual da Prefeitura de Ivaté-PR"""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        return ensure_protocol_in_reply(
+        return formatar_resposta_com_protocolo(
             "Olá! Sou a Clara, da Prefeitura de Ivaté. Recebi sua mensagem e encaminhei para análise da equipe responsável.",
             protocol_num,
         )
@@ -2030,10 +2045,10 @@ def generate_ai_response(text, category, urgency, protocol_num, location_status=
     elif is_positive:
         urgency_instruction = 'É um elogio! Agradeça de coração pelo retorno positivo do cidadão.'
     else:
-        urgency_instruction = 'Tom tranquilo e acolhedor. Confirme o registro e diga que a equipe irá analisar.'
+        urgency_instruction = 'Tom tranquilo e acolhedor. Diga que a equipe responsável irá analisar.'
 
     emoji_rule = (
-        'NÃO use emojis. A situação é séria e o cidadão está insatisfeito.'
+        'Pode começar com UM único emoji empático (😔 ou 🙏) para acolher — nada além disso no corpo.'
         if is_complaint else
         'Pode usar no máximo 1 emoji positivo (ex: 😊 ou ❤️) ao final.'
     )
@@ -2053,7 +2068,7 @@ INSTRUÇÃO CRÍTICA — ENDEREÇO INCOMPLETO (esta reclamação ainda não tem 
     try:
         client = get_openai_client(api_key)
         if not client:
-            return ensure_protocol_in_reply(
+            return formatar_resposta_com_protocolo(
                 f"Olá! Sou a Clara, da Prefeitura de Ivaté. Recebi sua solicitação e encaminhei para análise da equipe de {category}.",
                 protocol_num,
             )
@@ -2067,7 +2082,8 @@ REGRAS ABSOLUTAS:
 - Tom: humano, próximo, empático. Zero linguagem burocrática.
 - Categoria registrada: {category}.
 - {emoji_rule}
-- NUNCA prometa prazo de resolução. Diga apenas que a solicitação foi registrada, marcada como prioridade quando couber, e encaminhada para análise.
+- NUNCA prometa prazo de resolução. Diga apenas que foi encaminhado para análise, marcado como prioridade quando couber.
+- NÃO mencione protocolo nem diga "registrei"/"protocolo nº" — o sistema adiciona o protocolo e a confirmação automaticamente DEPOIS da sua resposta. Foque na empatia e, se faltar, na pergunta do endereço.
 - NUNCA mencione "Categoria classificada é" de forma robótica.
 
 IDIOMA E COMPREENSÃO:
@@ -2084,14 +2100,14 @@ TIPO DE MENSAGEM — IDENTIFIQUE E ADAPTE SUA RESPOSTA:
 
 1) OPINIÃO/FEEDBACK GERAL (ex: "a saúde está péssima", "a educação é horrível", "a cidade está abandonada", "o atendimento é ruim"):
    - A pessoa está dando uma opinião sobre o serviço, NÃO reportando um problema num local específico.
-   - NÃO peça endereço. NÃO mencione protocolo ainda.
+   - NÃO peça endereço.
    - Acolha com empatia genuína ("Sinto muito por essa experiência").
    - Peça que conte O QUE ACONTECEU de forma específica, para que a equipe entenda e possa agir.
-   - Ex: "Sinto muito por essa experiência. Pode me contar o que aconteceu? Assim consigo registrar e encaminhar para a equipe responsável."
+   - Ex: "Sinto muito por essa experiência. Pode me contar o que aconteceu? Assim a equipe responsável consegue agir."
 
 2) RECLAMAÇÃO ESPECÍFICA (ex: "falta remédio na UBS", "buraco na Rua Tal", "poste sem luz no bairro"):
    - A pessoa já trouxe detalhes concretos de um PROBLEMA ESPECÍFICO.
-   - Registre e mencione o protocolo #{protocol_num} de forma natural.
+   - Acolha com empatia.
    - {urgency_instruction}
    - Se faltar localização: pergunte rua e bairro/conjunto de forma natural.
    - Se a mensagem menciona local genérico ("na UBS", "na escola"), pergunte QUAL e EM QUAL BAIRRO.
@@ -2099,8 +2115,7 @@ TIPO DE MENSAGEM — IDENTIFIQUE E ADAPTE SUA RESPOSTA:
 {location_instruction}
 
 3) ELOGIO (sentimento positivo):
-   - Agradeça de coração pelo retorno positivo.
-   - Mencione o protocolo #{protocol_num} de forma natural."""
+   - Agradeça de coração pelo retorno positivo."""
 
         response = openai_chat_completion(
             client,
@@ -2120,14 +2135,14 @@ TIPO DE MENSAGEM — IDENTIFIQUE E ADAPTE SUA RESPOSTA:
         if not ok:
             print(f"[FILTRO-SAIDA] Resposta bloqueada ({motivo}) para "
                   f"{mascarar_telefone(remote_jid)} — usando fallback seguro.")
-            return ensure_protocol_in_reply(
+            return formatar_resposta_com_protocolo(
                 f"Recebi sua solicitação e encaminhei para análise da equipe de {category}.",
                 protocol_num,
             )
-        return ensure_protocol_in_reply(raw_reply, protocol_num)
+        return formatar_resposta_com_protocolo(raw_reply, protocol_num)
     except Exception as e:
         print(f"Erro ao gerar resposta da Clara: {e}")
-        return ensure_protocol_in_reply(
+        return formatar_resposta_com_protocolo(
             f"Olá! Sou a Clara, da Prefeitura de Ivaté. Recebi sua solicitação e encaminhei para análise da equipe de {category}. Poderia nos informar o local completo (bairro/rua)?",
             protocol_num,
         )
@@ -4924,7 +4939,10 @@ def webhook(event_type=None):
                     record_agent_reply(current_id, new_report['message'], reply)
                 except Exception as e:
                     print(f"❌ [WEBHOOK] AI reply failed: {e}")
-                    send_whatsapp_message(remote_jid, f"Recebi sua solicitação! Protocolo #{protocol_num}. Encaminhei para análise da equipe responsável.")
+                    send_whatsapp_message(remote_jid, formatar_resposta_com_protocolo(
+                        "Recebi sua solicitação e encaminhei para análise da equipe responsável.",
+                        protocol_num,
+                    ))
                 
                 return jsonify({"status": "processed", "protocol": protocol_num}), 200
 
@@ -5039,7 +5057,7 @@ def resolve_draft(feedback_id):
         # Fallback sem IA
         draft = (
             f"Olá{', ' + nome.split()[0] if nome and nome != 'Cidadão' else ''}! "
-            f"Sua solicitação (protocolo #{protocolo}) na área de {categoria} foi resolvida pela equipe da Prefeitura de Ivaté. "
+            f"Sua solicitação (protocolo *{protocolo}*) na área de {categoria} foi resolvida pela equipe da Prefeitura de Ivaté. "
             f"Agradecemos por usar o Voz Ativa!"
         )
         return jsonify({"draft": draft})
@@ -5087,7 +5105,7 @@ REGRAS:
         print(f"Erro ao gerar draft de resolução: {e}")
         draft = (
             f"Olá{', ' + nome.split()[0] if nome and nome != 'Cidadão' else ''}! "
-            f"Sua solicitação (protocolo #{protocolo}) na área de {categoria} foi resolvida pela equipe da Prefeitura de Ivaté. "
+            f"Sua solicitação (protocolo *{protocolo}*) na área de {categoria} foi resolvida pela equipe da Prefeitura de Ivaté. "
             f"Agradecemos por usar o Voz Ativa!"
         )
 

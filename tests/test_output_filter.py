@@ -230,7 +230,7 @@ class OutputFilterIntegrationTest(unittest.TestCase):
         # Não pode conter o conteúdo proibido; deve manter o protocolo.
         self.assertNotIn("indeniz", server.normalize_text(reply))
         self.assertNotIn("2 dias", reply)
-        self.assertIn("#20260042", reply)
+        self.assertIn("*20260042*", reply)  # protocolo em negrito (novo formato)
         # E o próprio fallback tem que passar no filtro.
         ok, _ = server.validar_resposta_clara(reply)
         self.assertTrue(ok)
@@ -248,7 +248,7 @@ class OutputFilterIntegrationTest(unittest.TestCase):
                     remote_jid="554499999999@s.whatsapp.net",
                 )
         self.assertIn("Sinto muito", reply)
-        self.assertIn("#20260050", reply)
+        self.assertIn("*20260050*", reply)  # protocolo em negrito (novo formato)
 
     def test_generate_thread_reply_bloqueia_e_usa_fallback(self):
         forbidden = "O responsável será demitido e você será indenizado amanhã."
