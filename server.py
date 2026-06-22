@@ -107,6 +107,10 @@ def ja_processado(msg_id):
 _global_rate_lock = threading.Lock()
 _json_write_lock = threading.Lock()
 _pending_lock = threading.Lock()  # serializa o buffer local de demandas não sincronizadas
+# Lock CURTO para todos os contadores de rate-limit por número (burst/rate/diário/
+# áudio/char/protocolo/consentimento). Sem ele, o read-modify-write desses dicts
+# sob 4 threads perde contagens e pode dar KeyError no del do cooldown.
+_rate_lock = threading.Lock()
 
 # Config
 EVOLUTION_API_URL = os.getenv("EVOLUTION_API_URL")
@@ -2848,21 +2852,27 @@ Regras:
 
 # --- SPAM PROTECTION ---
 
-# Rate Limiter: max messages per sender in a time window
-rate_limit_store = defaultdict(list)  # {remoteJid: [timestamps]}
-RATE_LIMIT_MAX = 10       # max messages por janela
-RATE_LIMIT_WINDOW = 600   # 10 minutes (in seconds)
+# --- POLÍTICAS DE RATE LIMIT (por número) ---
+# Camadas que se complementam: BURST (anti-flood em segundos) → RATE (janela
+# média) → DIÁRIO (teto do dia). Áudio tem limites próprios + conta no diário.
+# Os 3 limites mais sujeitos a ajuste são configuráveis por env.
 
-# Burst limit: trava o bot se a pessoa mandar várias msgs rápidas sem esperar resposta
+# Rate Limiter: janela média — evita uso contínuo intenso.
+rate_limit_store = defaultdict(list)  # {remoteJid: [timestamps]}
+RATE_LIMIT_MAX = 10       # máx 10 mensagens por janela
+RATE_LIMIT_WINDOW = 600   # 10 minutos (em segundos)
+
+# Burst limit: tolera o cidadão mandar algumas msgs seguidas (várias linhas de um
+# mesmo assunto), mas trava o flood. 5 msgs em 30s → cooldown de 60s.
 burst_limit_store = defaultdict(list)  # {remoteJid: [timestamps]}
-BURST_LIMIT_MAX = 3        # máx 3 mensagens em janela curta
+BURST_LIMIT_MAX = 5        # máx 5 mensagens em janela curta (antes era 3)
 BURST_LIMIT_WINDOW = 30    # 30 segundos
 BURST_COOLDOWN = 60        # cooldown de 60s após estourar o burst
 burst_cooldown_until = {}  # {remoteJid: timestamp_até_quando_bloqueado}
 
-# Limite diário: max mensagens por número por dia
+# Limite diário: teto de mensagens por número por dia (configurável por env).
 daily_limit_store = defaultdict(list)  # {remoteJid: [timestamps]}
-DAILY_LIMIT_MAX = 30
+DAILY_LIMIT_MAX = int(os.getenv("DAILY_MSG_LIMIT", "25"))
 DAILY_LIMIT_WINDOW = 86400  # 24 horas em segundos
 
 # Limite de caracteres por mensagem
@@ -2874,55 +2884,65 @@ PROTOCOL_QUERY_MAX = 3
 PROTOCOL_QUERY_WINDOW = 3600  # 1 hora
 
 
-def is_burst_limited(remote_jid):
-    """Trava o bot se a pessoa mandar msgs rápidas demais sem esperar resposta.
+def avaliar_burst(remote_jid):
+    """Avalia o burst de mensagens rápidas. Thread-safe (toda a lógica sob lock).
 
-    3 msgs em 30s = cooldown de 60s. Durante o cooldown, ignora silenciosamente
-    (sem responder, para não alimentar o comportamento).
+    Retorna:
+      "ok"       — pode processar normalmente
+      "estourou" — acabou de estourar o burst (avisar o cidadão uma vez)
+      "cooldown" — já está em cooldown (ignorar em silêncio)
     """
     now = time_now()
-    # Se está em cooldown ativo, verifica se já expirou
-    if remote_jid in burst_cooldown_until:
-        if now < burst_cooldown_until[remote_jid]:
-            print(f"[BURST] {mascarar_telefone(remote_jid)} em cooldown (faltam {int(burst_cooldown_until[remote_jid] - now)}s)")
-            return True
-        else:
-            del burst_cooldown_until[remote_jid]
-    # Limpa timestamps fora da janela
-    burst_limit_store[remote_jid] = [t for t in burst_limit_store[remote_jid] if now - t < BURST_LIMIT_WINDOW]
-    if len(burst_limit_store[remote_jid]) >= BURST_LIMIT_MAX:
-        # Ativou o burst — entra em cooldown
-        burst_cooldown_until[remote_jid] = now + BURST_COOLDOWN
-        print(f"[BURST] {mascarar_telefone(remote_jid)} estourou burst ({BURST_LIMIT_MAX} msgs em {BURST_LIMIT_WINDOW}s) — cooldown {BURST_COOLDOWN}s")
-        return True
-    burst_limit_store[remote_jid].append(now)
-    return False
+    with _rate_lock:
+        # Se está em cooldown ativo, verifica se já expirou
+        cooldown_ate = burst_cooldown_until.get(remote_jid)
+        if cooldown_ate is not None:
+            if now < cooldown_ate:
+                print(f"[BURST] {mascarar_telefone(remote_jid)} em cooldown (faltam {int(cooldown_ate - now)}s)")
+                return "cooldown"
+            burst_cooldown_until.pop(remote_jid, None)
+        # Limpa timestamps fora da janela
+        burst_limit_store[remote_jid] = [t for t in burst_limit_store[remote_jid] if now - t < BURST_LIMIT_WINDOW]
+        if len(burst_limit_store[remote_jid]) >= BURST_LIMIT_MAX:
+            burst_cooldown_until[remote_jid] = now + BURST_COOLDOWN
+            print(f"[BURST] {mascarar_telefone(remote_jid)} estourou burst ({BURST_LIMIT_MAX} msgs em {BURST_LIMIT_WINDOW}s) — cooldown {BURST_COOLDOWN}s")
+            return "estourou"
+        burst_limit_store[remote_jid].append(now)
+        return "ok"
 
 
 def is_rate_limited(remote_jid):
     """Verifica se o número excedeu o limite de mensagens por janela."""
     now = time_now()
-    rate_limit_store[remote_jid] = [t for t in rate_limit_store[remote_jid] if now - t < RATE_LIMIT_WINDOW]
-    if len(rate_limit_store[remote_jid]) >= RATE_LIMIT_MAX:
-        return True
-    rate_limit_store[remote_jid].append(now)
-    return False
+    with _rate_lock:
+        rate_limit_store[remote_jid] = [t for t in rate_limit_store[remote_jid] if now - t < RATE_LIMIT_WINDOW]
+        if len(rate_limit_store[remote_jid]) >= RATE_LIMIT_MAX:
+            return True
+        rate_limit_store[remote_jid].append(now)
+        return False
 
 
 def is_daily_limited(remote_jid):
-    """Verifica se o número excedeu o limite diário de 30 mensagens."""
+    """Verifica se o número excedeu o limite diário de mensagens."""
     now = time_now()
-    daily_limit_store[remote_jid] = [t for t in daily_limit_store[remote_jid] if now - t < DAILY_LIMIT_WINDOW]
-    if len(daily_limit_store[remote_jid]) >= DAILY_LIMIT_MAX:
-        return True
-    daily_limit_store[remote_jid].append(now)
-    return False
+    with _rate_lock:
+        daily_limit_store[remote_jid] = [t for t in daily_limit_store[remote_jid] if now - t < DAILY_LIMIT_WINDOW]
+        if len(daily_limit_store[remote_jid]) >= DAILY_LIMIT_MAX:
+            return True
+        daily_limit_store[remote_jid].append(now)
+        return False
 
 
-# Rate limit para áudios (evita queimar créditos do Whisper)
+# Rate limit para áudios (evita queimar créditos do Whisper e abuso).
+# Camadas: duração máx por áudio + teto por hora + teto por dia. Além disso, todo
+# áudio transcrito também conta no limite DIÁRIO geral de mensagens.
 audio_limit_store = defaultdict(list)
-AUDIO_LIMIT_MAX = 3
+AUDIO_LIMIT_MAX = 3        # máx 3 áudios por HORA
 AUDIO_LIMIT_WINDOW = 3600  # 1 hora
+AUDIO_MAX_SECONDS = int(os.getenv("AUDIO_MAX_SECONDS", "60"))  # duração máx por áudio
+audio_daily_store = defaultdict(list)
+AUDIO_DAILY_MAX = int(os.getenv("AUDIO_DAILY_LIMIT", "10"))    # máx áudios por DIA
+AUDIO_DAILY_WINDOW = 86400  # 24 horas
 
 # Rate limit por volume de texto (evita sobrecarregar GPT)
 char_volume_store = defaultdict(list)  # {remoteJid: [(timestamp, char_count)]}
@@ -2949,15 +2969,16 @@ def is_globally_rate_limited():
 def is_char_volume_limited(remote_jid, text_length):
     """Limita volume total de caracteres por janela de tempo."""
     now = time_now()
-    char_volume_store[remote_jid] = [
-        (t, c) for t, c in char_volume_store[remote_jid]
-        if now - t < CHAR_VOLUME_WINDOW
-    ]
-    total_chars = sum(c for _, c in char_volume_store[remote_jid])
-    if total_chars + text_length > CHAR_VOLUME_MAX:
-        return True
-    char_volume_store[remote_jid].append((now, text_length))
-    return False
+    with _rate_lock:
+        char_volume_store[remote_jid] = [
+            (t, c) for t, c in char_volume_store[remote_jid]
+            if now - t < CHAR_VOLUME_WINDOW
+        ]
+        total_chars = sum(c for _, c in char_volume_store[remote_jid])
+        if total_chars + text_length > CHAR_VOLUME_MAX:
+            return True
+        char_volume_store[remote_jid].append((now, text_length))
+        return False
 
 
 # Controle de mudanças de consentimento (anti-spam de SIM/NÃO)
@@ -2968,34 +2989,48 @@ CONSENT_CHANGE_WINDOW = 86400  # 24 horas
 def is_consent_change_limited(remote_jid):
     """Máximo 3 mudanças de consentimento por dia."""
     now = time_now()
-    consent_change_store[remote_jid] = [
-        t for t in consent_change_store[remote_jid]
-        if now - t < CONSENT_CHANGE_WINDOW
-    ]
-    if len(consent_change_store[remote_jid]) >= CONSENT_CHANGE_MAX:
-        return True
-    consent_change_store[remote_jid].append(now)
-    return False
+    with _rate_lock:
+        consent_change_store[remote_jid] = [
+            t for t in consent_change_store[remote_jid]
+            if now - t < CONSENT_CHANGE_WINDOW
+        ]
+        if len(consent_change_store[remote_jid]) >= CONSENT_CHANGE_MAX:
+            return True
+        consent_change_store[remote_jid].append(now)
+        return False
 
 
 def is_audio_limited(remote_jid):
-    """Máximo 3 áudios por hora por número."""
+    """Teto de áudios por HORA por número (anti-burst de áudio)."""
     now = time_now()
-    audio_limit_store[remote_jid] = [t for t in audio_limit_store[remote_jid] if now - t < AUDIO_LIMIT_WINDOW]
-    if len(audio_limit_store[remote_jid]) >= AUDIO_LIMIT_MAX:
-        return True
-    audio_limit_store[remote_jid].append(now)
-    return False
+    with _rate_lock:
+        audio_limit_store[remote_jid] = [t for t in audio_limit_store[remote_jid] if now - t < AUDIO_LIMIT_WINDOW]
+        if len(audio_limit_store[remote_jid]) >= AUDIO_LIMIT_MAX:
+            return True
+        audio_limit_store[remote_jid].append(now)
+        return False
+
+
+def is_audio_daily_limited(remote_jid):
+    """Teto de áudios por DIA por número (controla custo do Whisper e abuso)."""
+    now = time_now()
+    with _rate_lock:
+        audio_daily_store[remote_jid] = [t for t in audio_daily_store[remote_jid] if now - t < AUDIO_DAILY_WINDOW]
+        if len(audio_daily_store[remote_jid]) >= AUDIO_DAILY_MAX:
+            return True
+        audio_daily_store[remote_jid].append(now)
+        return False
 
 
 def is_protocol_query_limited(remote_jid):
     """Verifica se o número excedeu o limite de consultas de protocolo (3/hora)."""
     now = time_now()
-    protocol_query_store[remote_jid] = [t for t in protocol_query_store[remote_jid] if now - t < PROTOCOL_QUERY_WINDOW]
-    if len(protocol_query_store[remote_jid]) >= PROTOCOL_QUERY_MAX:
-        return True
-    protocol_query_store[remote_jid].append(now)
-    return False
+    with _rate_lock:
+        protocol_query_store[remote_jid] = [t for t in protocol_query_store[remote_jid] if now - t < PROTOCOL_QUERY_WINDOW]
+        if len(protocol_query_store[remote_jid]) >= PROTOCOL_QUERY_MAX:
+            return True
+        protocol_query_store[remote_jid].append(now)
+        return False
 
 
 def truncar_mensagem(text: str) -> tuple[str, bool]:
@@ -4432,15 +4467,22 @@ def webhook(event_type=None):
 
             # Audio Processing
             if not text and audio_msg and remote_jid:
-                # Rate limit de áudio
+                # 1) Duração primeiro (cheque barato, não consome cota de áudio).
+                seconds = audio_msg.get("seconds", 0)
+                if seconds > AUDIO_MAX_SECONDS:
+                    print(f"[AUDIO] Ignored too long: {seconds}s (max {AUDIO_MAX_SECONDS}s)")
+                    send_whatsapp_message(remote_jid, f"⚠️ O seu áudio é muito longo. Por favor, envie áudios de no máximo {AUDIO_MAX_SECONDS} segundos para que eu possa processar.")
+                    return jsonify({"status": "audio_too_long"}), 200
+                # 2) Teto por HORA (anti-burst de áudio).
                 if is_audio_limited(remote_jid):
                     send_whatsapp_message(remote_jid, "⚠️ Você já enviou vários áudios recentemente. Aguarde um pouco ou envie sua mensagem por texto.")
                     return jsonify({"status": "audio_rate_limited"}), 200
-                seconds = audio_msg.get("seconds", 0)
-                if seconds > 35:
-                    print(f"[AUDIO] Ignored too long: {seconds}s")
-                    send_whatsapp_message(remote_jid, "⚠️ O seu áudio é muito longo. Por favor, envie áudios de no máximo 35 segundos para que eu possa processar.")
-                    return jsonify({"status": "audio_too_long"}), 200
+                # 3) Teto por DIA (controla custo do Whisper). O áudio transcrito
+                #    também contará no limite diário geral de mensagens, mais abaixo.
+                if is_audio_daily_limited(remote_jid):
+                    print(f"[AUDIO] {mascarar_telefone(remote_jid)} atingiu o teto diário de {AUDIO_DAILY_MAX} audios")
+                    send_whatsapp_message(remote_jid, f"⚠️ Você atingiu o limite de {AUDIO_DAILY_MAX} áudios por hoje. Por favor, envie sua mensagem por texto.")
+                    return jsonify({"status": "audio_daily_limited"}), 200
                 
                 if native_transcription:
                     print(f"[AUDIO] Transcricao nativa recebida ({len(native_transcription)} chars)")
@@ -4546,9 +4588,11 @@ def webhook(event_type=None):
                     if moderation["status"] in ("blocked", "muted"):
                         send_whatsapp_message(remote_jid, moderation["reply"])
                         return jsonify({"status": moderation["status"]}), 200
-                if is_burst_limited(remote_jid):
-                    # Primeira vez que estoura: avisa. Msgs seguintes no cooldown: silêncio total.
-                    if remote_jid in burst_cooldown_until and (burst_cooldown_until[remote_jid] - time_now()) > (BURST_COOLDOWN - 2):
+                burst = avaliar_burst(remote_jid)
+                if burst != "ok":
+                    # Só avisa na 1ª vez que estoura; durante o cooldown, silêncio total
+                    # (para não alimentar o flood). Thread-safe: status vem da função.
+                    if burst == "estourou":
                         send_whatsapp_message(
                             remote_jid,
                             "Você está enviando mensagens rápido demais. "
@@ -4561,7 +4605,7 @@ def webhook(event_type=None):
                     return jsonify({"status": "rate_limited"}), 200
                 if is_daily_limited(remote_jid):
                     print(f"[DAILY-LIMIT] {mascarar_telefone(remote_jid)} exceeded {DAILY_LIMIT_MAX} msgs today")
-                    send_whatsapp_message(remote_jid, "Você atingiu o limite de mensagens por hoje (30). Volte amanhã!")
+                    send_whatsapp_message(remote_jid, f"Você atingiu o limite de mensagens por hoje ({DAILY_LIMIT_MAX}). Volte amanhã!")
                     return jsonify({"status": "daily_limited"}), 200
                 # Rate limit de volume de texto
                 if is_char_volume_limited(remote_jid, len(text)):
