@@ -1686,6 +1686,89 @@ def ensure_protocol_in_reply(reply, protocol_num):
     return f"{reply.rstrip()} {suffix.strip()}"
 
 
+# --- FILTRO DE SAÍDA DA IA (defesa pós-geração) ---
+# A resposta da Clara é a voz oficial da Prefeitura para a cidade inteira (o número
+# fica público, em redes sociais). O system prompt já proíbe certos conteúdos, mas
+# isso é contornável por injeção de prompt. Este filtro é a REDE DE SEGURANÇA: roda
+# DEPOIS da geração e, se a resposta contiver conteúdo proibido, descarta e cai num
+# fallback fixo e seguro. As regex casam sobre o texto normalizado (minúsculo, sem
+# acento) de normalize_text(). Princípio: bloquear (→ fallback seguro) custa pouco
+# (cidadão segue registrado, com protocolo); deixar passar conteúdo indevido é grave.
+
+# Fallback usado quando a resposta de um chamado EXISTENTE é bloqueada (sem protocolo,
+# coerente com a regra do thread de não citar protocolo na continuação).
+RESPOSTA_FALLBACK_THREAD = (
+    "Já adicionei essa informação ao seu chamado. Encaminhei para análise da equipe responsável."
+)
+
+_RESPOSTA_PROIBIDA = [
+    # Promessa de PRAZO / tempo de resolução (a Clara NUNCA promete prazo).
+    ("prazo", re.compile(r"\bem\s+\d+\s*(horas|hora|dias|dia|semanas|semana|meses|mes|h)\b")),
+    ("prazo", re.compile(r"\b(no prazo de|dentro de\s+\d+|ate\s+\d+\s*(horas|hora|dias|dia))")),
+    ("prazo", re.compile(r"\b(amanha|hoje mesmo|ainda hoje|nesta semana|nessa semana|na proxima semana|proximos dias)\b")),
+    ("prazo", re.compile(r"\bate\s+(segunda|terca|quarta|quinta|sexta|sabado|domingo)\b")),
+    # INDENIZAÇÃO / ressarcimento / promessa de pagamento.
+    ("indenizacao", re.compile(r"\b(indeniz|ressarc|reembols)")),
+    ("indenizacao", re.compile(r"\bcompensacao financeira\b")),
+    ("indenizacao", re.compile(r"\b(vai|vao|vamos|iremos|irei|sera|serao)\s+\w*\s*(pagar|pago|pagos|indenizar|ressarcir|reembolsar)\b")),
+    # POLÍTICA / eleitoral (canal oficial não se manifesta sobre isso). Termos
+    # ambíguos foram deixados de fora de propósito: 'partido' (braço partido) e
+    # 'urna' (urna funerária) gerariam falso positivo em contexto de saúde.
+    ("politica", re.compile(r"\b(eleicao|eleicoes|eleitoral|eleitor|eleitores|voto|votos|votar|votara|vote|votem|votacao|votacoes|candidato|candidata|candidatura|vereador|vereadora|deputado|deputada)\b")),
+    ("politica", re.compile(r"\b(campanha eleitoral|partido politico)\b")),
+    ("politica", re.compile(r"\bprefeito\b")),  # a pessoa — 'prefeitura' (instituição) não casa
+    # FALA FORJADA / vazamento de prompt.
+    ("forjado", re.compile(r"(?m)^\s*(clara|cidadao|atendente|operador|sistema|system|assistant|user|usuario)\s*:")),
+    ("forjado", re.compile(r"\b(prompt|minhas instrucoes|fui instruida|instrucoes internas)\b")),
+    # "ignore/ignorar (as) instruções/regras/ordens" e "ignore/ignorar tudo".
+    ("forjado", re.compile(r"\bignor\w*\s+(as\s+|todas\s+as\s+|minhas\s+|essas\s+)?(instrucoes|regras|ordens|tudo)\b")),
+    # AÇÃO concluída/garantida ou PUNIÇÃO PROMETIDA (a Clara não garante execução
+    # nem pune). Punição só casa em contexto promissório ("será demitido", "vamos
+    # punir") — nunca o termo solto, que pode ser relato do próprio cidadão
+    # ("fui demitido", "meu filho foi punido na escola").
+    ("acao_garantida", re.compile(r"\bja\s+(consertamos|consertado|resolvemos|resolvido|arrumamos|arrumado|reparamos|reparado|enviamos)\b")),
+    ("acao_garantida", re.compile(r"\b(sera|serao|vai ser|vao ser|vamos|iremos|irei)\s+(resolvido|resolvida|consertado|consertada|arrumado|arrumada|reparado|reparada|punido|punida|demitido|demitida|exonerado|exonerada)\b")),
+    ("acao_garantida", re.compile(r"\b(vamos|iremos|irei|vai|vao)\s+(punir|demitir|exonerar)\b")),
+    # Promessa de SOLUÇÃO (proibida pelo prompt). 'analisar', 'encaminhar' e
+    # 'cuidar' ficam de fora de propósito — são as ações permitidas da Clara.
+    ("acao_garantida", re.compile(r"\b(vamos|iremos|irei|vai|vao)\s+(resolver|consertar|arrumar|reparar|solucionar)\b")),
+    ("acao_garantida", re.compile(r"\b(resolveremos|consertaremos|arrumaremos|repararemos|solucionaremos)\b")),
+]
+
+
+def validar_resposta_clara(reply):
+    """Valida a resposta gerada pela IA antes de enviar ao cidadão.
+
+    Retorna (ok: bool, motivo: str). ok=False = a resposta contém conteúdo
+    proibido (prazo, indenização, política, fala forjada, ação/punição
+    garantida) e o chamador DEVE usar o fallback fixo seguro.
+    """
+    texto = normalize_text(reply or "")
+    if not texto:
+        return True, "vazio"  # vazio é tratado pelo fallback do chamador
+    for motivo, padrao in _RESPOSTA_PROIBIDA:
+        if padrao.search(texto):
+            return False, motivo
+    return True, "ok"
+
+
+def sanitizar_texto_historico(texto):
+    """Desarma tentativas de forjar falas no histórico enviado ao modelo.
+
+    Junta tudo em uma linha (impede o cidadão criar linhas falsas 'Clara: ...')
+    e neutraliza prefixos de papel embutidos no texto do cidadão.
+    """
+    if not texto:
+        return ""
+    t = re.sub(r"\s+", " ", texto).strip()
+    t = re.sub(
+        r"(?i)\b(clara|cidad[ãa]o|atendente|operador|sistema|system|assistant|user|usu[áa]rio)\s*:",
+        r"\1 -",
+        t,
+    )
+    return t
+
+
 CLASSIFICATION_JSON_SCHEMA = {
     "name": "municipal_feedback_classification",
     "schema": {
@@ -1993,7 +2076,16 @@ TIPO DE MENSAGEM — IDENTIFIQUE E ADAPTE SUA RESPOSTA:
             remote_jid=remote_jid,
         )
 
-        return ensure_protocol_in_reply(extract_response_text(response), protocol_num)
+        raw_reply = extract_response_text(response)
+        ok, motivo = validar_resposta_clara(raw_reply)
+        if not ok:
+            print(f"[FILTRO-SAIDA] Resposta bloqueada ({motivo}) para "
+                  f"{mascarar_telefone(remote_jid)} — usando fallback seguro.")
+            return ensure_protocol_in_reply(
+                f"Recebi sua solicitação e encaminhei para análise da equipe de {category}.",
+                protocol_num,
+            )
+        return ensure_protocol_in_reply(raw_reply, protocol_num)
     except Exception as e:
         print(f"Erro ao gerar resposta da Clara: {e}")
         return ensure_protocol_in_reply(
@@ -3986,12 +4078,12 @@ def generate_thread_reply(remote_jid, text, categoria, sentimento, active_feedba
     """Gera resposta para chamado existente sem misturar texto do cidadao no system prompt."""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        return "Já adicionei essa informação ao seu chamado. Encaminhei para análise da equipe responsável."
+        return RESPOSTA_FALLBACK_THREAD
 
     try:
         client = get_openai_client(api_key)
         if not client:
-            return "Já adicionei essa informação ao seu chamado. Encaminhei para análise da equipe responsável."
+            return RESPOSTA_FALLBACK_THREAD
 
         if sentimento in ['Critico', 'Crítico']:
             urgency_context = 'PRIORIDADE MÁXIMA: mostre solidariedade, diga que a informação foi marcada como prioridade e oriente 190, 192 ou 193 se houver emergência.'
@@ -4012,7 +4104,8 @@ def generate_thread_reply(remote_jid, text, categoria, sentimento, active_feedba
         history_lines = []
         for entry in recent_entries:
             role_label = "Cidadão" if entry.get('role') == 'client' else "Clara"
-            history_lines.append(f"{role_label}: {entry.get('text', '')}")
+            # Sanitiza: impede que o texto do cidadão forje uma fala da "Clara" no histórico.
+            history_lines.append(f"{role_label}: {sanitizar_texto_historico(entry.get('text', ''))}")
         conversation_history = "\n".join(history_lines)
 
         system_prompt = """Você é a Clara, atendente da Prefeitura de Ivaté - PR.
@@ -4052,10 +4145,19 @@ Escreva a resposta da Clara agora."""
             timeout=15,
             remote_jid=remote_jid,
         )
-        return extract_response_text(resp)
+        raw_reply = extract_response_text(resp)
+        if not raw_reply:
+            # Modelo voltou vazio (content=None): nunca enviar mensagem vazia.
+            return RESPOSTA_FALLBACK_THREAD
+        ok, motivo = validar_resposta_clara(raw_reply)
+        if not ok:
+            print(f"[FILTRO-SAIDA] Resposta de chamado bloqueada ({motivo}) para "
+                  f"{mascarar_telefone(remote_jid)} — usando fallback seguro.")
+            return RESPOSTA_FALLBACK_THREAD
+        return raw_reply
     except Exception as e:
         print(f"Erro na resposta de threading: {e}")
-        return "Já adicionei essa informação ao seu chamado. Encaminhei para análise da equipe responsável."
+        return RESPOSTA_FALLBACK_THREAD
 
 
 def _mascarar_segredo(valor: str) -> str:
