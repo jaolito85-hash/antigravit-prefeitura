@@ -148,9 +148,10 @@ class ClaraSecurityGuardrailsTest(unittest.TestCase):
         self.assertIn("2758", answer)
         self.assertNotIn("Paraná, 981", answer)
 
-    def test_generated_specific_demand_reply_always_includes_protocol(self):
+    def test_confirmacao_com_info_completa_inclui_protocolo(self):
+        # Com endereço completo e resposta de confirmação (sem pergunta), o protocolo aparece.
         class FakeChoice:
-            message = type("Message", (), {"content": "Sinto muito por isso. Para encaminhar ao setor correto, qual é a rua e o bairro?"})()
+            message = type("Message", (), {"content": "Sinto muito pela árvore caída. Já encaminhei como prioridade para a equipe responsável."})()
 
         class FakeResponse:
             choices = [FakeChoice()]
@@ -166,11 +167,11 @@ class ClaraSecurityGuardrailsTest(unittest.TestCase):
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test"}, clear=False):
             with patch("server.OpenAI", FakeClient, create=True):
                 reply = server.generate_ai_response(
-                    "A chuva derrubou uma árvore na rua",
+                    "A chuva derrubou uma árvore na Rua Brasil, 100, Centro",
                     "Infraestrutura & Obras",
                     "Urgente",
                     "20260042",
-                    location_status="pendente",
+                    location_status="completo",
                     remote_jid="554499999999@s.whatsapp.net",
                 )
 

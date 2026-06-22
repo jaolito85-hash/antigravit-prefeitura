@@ -86,22 +86,99 @@ class FormatadorTest(unittest.TestCase):
 
 
 class FormatoIntegracaoTest(unittest.TestCase):
-    def test_generate_ai_response_usa_novo_formato(self):
-        corpo_ia = "Sinto muito pelo buraco. Qual é a rua e o bairro?"
+    def test_generate_ai_response_confirmando_usa_novo_formato(self):
+        # Endereço já completo + resposta de confirmação (sem pergunta) → mostra protocolo.
+        corpo_ia = "Sinto muito pelo buraco. Já encaminhei para a equipe responsável."
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test"}, clear=False):
             with patch("server.OpenAI", _fake_client_returning(corpo_ia), create=True):
                 reply = server.generate_ai_response(
-                    "buraco na minha rua",
+                    "buraco enorme na Rua Brasil, 100, Centro",
                     "Infraestrutura & Obras",
                     "Urgente",
                     "20260035",
-                    location_status="pendente",
+                    location_status="completo",
                     remote_jid="554499999999@s.whatsapp.net",
                 )
         self.assertIn("📋 Protocolo:\n*20260035*", reply)
         self.assertNotIn("#20260035", reply)
         self.assertIn(server.ASSINATURA_RODAPE, reply)
         self.assertIn("Sinto muito pelo buraco", reply)
+
+    def test_primeira_mensagem_pedindo_endereco_nao_mostra_protocolo(self):
+        # FLUXO: enquanto pede rua/bairro, NÃO pode aparecer protocolo nem assinatura.
+        corpo_ia = "😔 Sinto muito por isso. Qual é a rua e o bairro ou conjunto?"
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test"}, clear=False):
+            with patch("server.OpenAI", _fake_client_returning(corpo_ia), create=True):
+                reply = server.generate_ai_response(
+                    "tem um buraco na minha rua",
+                    "Infraestrutura & Obras",
+                    "Urgente",
+                    "20260035",
+                    location_status="pendente",
+                    remote_jid="554499999999@s.whatsapp.net",
+                )
+        self.assertNotIn("Protocolo", reply)
+        self.assertNotIn("20260035", reply)
+        self.assertNotIn(server.ASSINATURA_RODAPE, reply)
+        self.assertIn("Sinto muito", reply)
+
+    def test_opiniao_geral_que_pergunta_nao_mostra_protocolo(self):
+        # Caso exato do bug reportado: opinião geral, bot pergunta "o que aconteceu?".
+        corpo_ia = "😔 Sinto muito por essa experiência. Pode me contar o que aconteceu?"
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test"}, clear=False):
+            with patch("server.OpenAI", _fake_client_returning(corpo_ia), create=True):
+                reply = server.generate_ai_response(
+                    "muito triste com o atendimento que tenho recebido no hospital",
+                    "Saúde & Atendimento",
+                    "Neutro",
+                    "20260036",
+                    location_status="pendente",
+                    remote_jid="554499999999@s.whatsapp.net",
+                )
+        self.assertNotIn("Protocolo", reply)
+        self.assertNotIn(server.ASSINATURA_RODAPE, reply)
+
+    def test_thread_que_completa_endereco_mostra_protocolo(self):
+        # Cidadão informa a rua numa continuação → AGORA mostra protocolo + assinatura.
+        corpo_ia = "Anotei! Já encaminhei para a equipe responsável."
+        active = {
+            "id": 7,
+            "protocol": "20260035",
+            "message": server.build_feedback_message("buraco na minha rua", "2026-01-01T00:00:00"),
+            "location_status": "pendente",
+        }
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test"}, clear=False):
+            with patch("server.OpenAI", _fake_client_returning(corpo_ia), create=True):
+                reply = server.generate_thread_reply(
+                    remote_jid="554499999999@s.whatsapp.net",
+                    text="Rua Brasil, Centro",
+                    categoria="Infraestrutura & Obras",
+                    sentimento="Urgente",
+                    active_feedback=active,
+                    new_thread_rua="Rua Brasil",
+                )
+        self.assertIn("📋 Protocolo:\n*20260035*", reply)
+        self.assertIn(server.ASSINATURA_RODAPE, reply)
+
+    def test_thread_nao_repete_protocolo_ja_enviado(self):
+        # Se o protocolo já apareceu antes no chamado, não repete.
+        msg = server.append_conversation_entry(
+            server.build_feedback_message("buraco", "2026-01-01T00:00:00"),
+            "agent",
+            "Anotei!\n\n📋 Protocolo:\n*20260035*\n\n" + server.ASSINATURA_RODAPE,
+        )
+        active = {"id": 7, "protocol": "20260035", "message": msg, "location_status": "completo"}
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test"}, clear=False):
+            with patch("server.OpenAI", _fake_client_returning("Por nada! Estamos à disposição."), create=True):
+                reply = server.generate_thread_reply(
+                    remote_jid="554499999999@s.whatsapp.net",
+                    text="obrigado",
+                    categoria="Infraestrutura & Obras",
+                    sentimento="Neutro",
+                    active_feedback=active,
+                    new_thread_rua=None,
+                )
+        self.assertNotIn("📋 Protocolo", reply)
 
     def test_handoff_sensivel_tem_protocolo_negrito_sem_assinatura(self):
         reply = server.build_sensitive_handoff_reply("20260042", "Saúde & Atendimento", reasons=["saude_grave"])

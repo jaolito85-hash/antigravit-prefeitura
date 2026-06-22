@@ -220,11 +220,11 @@ class OutputFilterIntegrationTest(unittest.TestCase):
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test"}, clear=False):
             with patch("server.OpenAI", _fake_client_returning(forbidden), create=True):
                 reply = server.generate_ai_response(
-                    "A chuva derrubou uma árvore na rua",
+                    "A chuva derrubou uma árvore na Rua Brasil, 100, Centro",
                     "Infraestrutura & Obras",
                     "Urgente",
                     "20260042",
-                    location_status="pendente",
+                    location_status="completo",  # info já coletada → confirmação com protocolo
                     remote_jid="554499999999@s.whatsapp.net",
                 )
         # Não pode conter o conteúdo proibido; deve manter o protocolo.

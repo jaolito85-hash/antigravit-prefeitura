@@ -2135,16 +2135,21 @@ TIPO DE MENSAGEM — IDENTIFIQUE E ADAPTE SUA RESPOSTA:
         if not ok:
             print(f"[FILTRO-SAIDA] Resposta bloqueada ({motivo}) para "
                   f"{mascarar_telefone(remote_jid)} — usando fallback seguro.")
-            return formatar_resposta_com_protocolo(
-                f"Recebi sua solicitação e encaminhei para análise da equipe de {category}.",
-                protocol_num,
-            )
+            raw_reply = f"Recebi sua solicitação e encaminhei para análise da equipe de {category}."
+        if not raw_reply.strip():
+            raw_reply = f"Recebi sua solicitação e encaminhei para análise da equipe de {category}."
+        # FLUXO: primeiro acolhe e PERGUNTA (rua/bairro/detalhes). O protocolo +
+        # assinatura só entram quando NÃO estamos mais pedindo informação — ou seja,
+        # endereço já completo (ou categoria que dispensa) E sem pergunta no final.
+        if needs_location or raw_reply.rstrip().endswith("?"):
+            return raw_reply.strip()
         return formatar_resposta_com_protocolo(raw_reply, protocol_num)
     except Exception as e:
         print(f"Erro ao gerar resposta da Clara: {e}")
-        return formatar_resposta_com_protocolo(
-            f"Olá! Sou a Clara, da Prefeitura de Ivaté. Recebi sua solicitação e encaminhei para análise da equipe de {category}. Poderia nos informar o local completo (bairro/rua)?",
-            protocol_num,
+        # Ainda pedindo o local → sem protocolo nesta mensagem.
+        return (
+            "Olá! Sou a Clara, da Prefeitura de Ivaté. Recebi sua solicitação. "
+            "Para encaminhar ao setor certo, pode me informar a rua e o bairro ou conjunto?"
         )
 
 
@@ -4239,6 +4244,20 @@ Escreva a resposta da Clara agora."""
             print(f"[FILTRO-SAIDA] Resposta de chamado bloqueada ({motivo}) para "
                   f"{mascarar_telefone(remote_jid)} — usando fallback seguro.")
             return RESPOSTA_FALLBACK_THREAD
+        # Protocolo + assinatura entram aqui quando a informação JÁ foi coletada
+        # (endereço completo, ou categoria que dispensa endereço, ou o cidadão acabou
+        # de informar a rua) E o bot não está perguntando mais nada. Envia só UMA vez
+        # por chamado (não repete se o protocolo já apareceu numa resposta anterior).
+        protocolo = active_feedback.get('protocol')
+        ja_enviou_protocolo = bool(protocolo) and str(protocolo) in (active_feedback.get('message') or '')
+        info_completa = (
+            categoria in LOCATION_OPTIONAL_CATEGORIES
+            or current_loc_status == 'completo'
+            or bool(new_thread_rua)
+        )
+        pedindo_info = raw_reply.rstrip().endswith("?")
+        if info_completa and not pedindo_info and not ja_enviou_protocolo:
+            return formatar_resposta_com_protocolo(raw_reply, protocolo)
         return raw_reply
     except Exception as e:
         print(f"Erro na resposta de threading: {e}")
