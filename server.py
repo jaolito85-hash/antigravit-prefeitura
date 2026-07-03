@@ -165,13 +165,13 @@ EVENTS_FILE = 'execution/events.json'
 CONFIG_FILE = 'execution/config.json'
 MODERATION_FILE = 'execution/moderation_state.json'
 
-# IMPORTANTE: usar modelos NÃO-reasoning para respostas/classificação.
-# Modelos de raciocínio (família gpt-5*) gastam o orçamento de tokens "pensando"
-# e devolvem conteúdo vazio com max_tokens baixo (cai no fallback), além de serem
-# lentos (~1 min) — ruim para um bot de WhatsApp. gpt-4o-mini é rápido e confiável.
-OPENAI_MODEL_CITIZEN_REPLY = os.getenv("OPENAI_MODEL_CITIZEN_REPLY", "gpt-4o-mini")
-OPENAI_MODEL_CLASSIFIER = os.getenv("OPENAI_MODEL_CLASSIFIER", "gpt-4o-mini")
-OPENAI_MODEL_INTERNAL_DRAFT = os.getenv("OPENAI_MODEL_INTERNAL_DRAFT", "gpt-4o-mini")
+# Modelos da família gpt-5* são de raciocínio: o wrapper openai_chat_completion()
+# compensa isso automaticamente (max_completion_tokens com folga de +600 para o
+# "pensamento", sem temperature customizada, reasoning_effort=minimal para manter
+# a latência baixa). Com esse tratamento, gpt-5.4-mini responde rápido e é o padrão.
+OPENAI_MODEL_CITIZEN_REPLY = os.getenv("OPENAI_MODEL_CITIZEN_REPLY", "gpt-5.4-mini")
+OPENAI_MODEL_CLASSIFIER = os.getenv("OPENAI_MODEL_CLASSIFIER", "gpt-5.4-mini")
+OPENAI_MODEL_INTERNAL_DRAFT = os.getenv("OPENAI_MODEL_INTERNAL_DRAFT", "gpt-5.4-mini")
 OPENAI_MODEL_MODERATION = os.getenv("OPENAI_MODEL_MODERATION", "omni-moderation-latest")
 # Esforço de raciocínio para modelos gpt-5* (reasoning). 'minimal' = resposta rápida,
 # quase sem "pensar"; suba para 'low'/'medium' se quiser mais qualidade (custo: latência/tokens).
