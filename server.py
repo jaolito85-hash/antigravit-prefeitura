@@ -24,7 +24,12 @@ load_dotenv()
 
 app = Flask(__name__, static_folder='static', static_url_path='/static')
 app.config['TEMPLATES_AUTO_RELOAD'] = True
-app.secret_key = os.getenv("FLASK_SECRET_KEY") or os.urandom(32).hex()
+app.secret_key = os.getenv("FLASK_SECRET_KEY") or ""
+if not app.secret_key:
+    # Fallback efêmero mantido para dev/testes; em produção a env DEVE existir,
+    # senão toda sessão do dashboard cai a cada restart do container.
+    print("[SEGURANCA] AVISO: FLASK_SECRET_KEY nao configurada — usando chave efemera; sessoes do dashboard serao invalidadas a cada restart.")
+    app.secret_key = os.urandom(32).hex()
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 # Painel roda exclusivamente em HTTPS (ivate.nodedata.com.br) — cookie de sessao
@@ -3228,11 +3233,39 @@ for _faq_key, _faq_val in FAQ_IVATE.items():
     _faq_resolved[_faq_key] = _last_real_answer
 
 
+# FAQ só deve responder PERGUNTA CURTA de informação. Se o termo aparece dentro
+# de um relato ("a coleta de lixo nao passa ha 2 semanas"), responder FAQ engole
+# a demanda: o cidadão recebe o horário da coleta e o card NUNCA é criado.
+FAQ_MAX_CHARS = 80
+_FAQ_MARCADORES_RECLAMACAO = [
+    # negações de serviço (texto já normalizado, sem acento)
+    'nao passa', 'nao passou', 'nao veio', 'nao vem', 'nao chegou',
+    'nao recolhe', 'nao recolheu', 'nao funciona', 'nao funcionou',
+    'nao atende', 'nao atendeu', 'nao resolve', 'nao resolveu',
+    'parou de', 'deixou de', 'pararam de', 'deixaram de',
+    # tempo decorrido (indica problema persistente, não dúvida)
+    'faz dias', 'faz semana', 'faz mes', 'faz tempo',
+    'ha dias', 'ha semana', 'ha mes', 'ha muito tempo',
+    'dias sem', 'semana sem', 'semanas sem', 'meses sem',
+    # vocabulário de reclamação/ocorrência
+    'reclama', 'denunci', 'problema', 'buraco', 'quebrad',
+    'abandonad', 'acumulad', 'espalhad', 'jogad', 'sujeira',
+    'aconteceu', 'roubaram', 'furtaram', 'invadiram',
+]
+
+
 def check_faq(text: str) -> str | None:
-    """Verifica se a mensagem é uma pergunta frequente e retorna a resposta, ou None."""
+    """Responde FAQ apenas para pergunta curta de informação — nunca para relato/reclamação."""
     if not text:
         return None
     normalized = normalize_text(text.lower()).strip().rstrip('?!.')
+    # Mensagem longa = contexto/história → é demanda, deixa seguir para virar card.
+    if len(normalized) > FAQ_MAX_CHARS:
+        return None
+    # Qualquer marcador de reclamação → não é dúvida, é relato → segue o fluxo normal.
+    for marcador in _FAQ_MARCADORES_RECLAMACAO:
+        if marcador in normalized:
+            return None
     for faq_key, faq_answer in _faq_resolved.items():
         if faq_key in normalized:
             return faq_answer
@@ -4423,7 +4456,9 @@ def webhook(event_type=None):
             if msg_timestamp:
                 try:
                     msg_time = int(msg_timestamp)
-                    now_epoch = int(datetime.utcnow().timestamp())
+                    # time_now() (epoch) independe do fuso do container; utcnow().timestamp()
+                    # quebraria o anti-replay se o container deixasse de rodar em UTC.
+                    now_epoch = int(time_now())
                     if abs(now_epoch - msg_time) > 120:
                         print(f"[REPLAY] Mensagem antiga rejeitada: {abs(now_epoch - msg_time)}s de atraso")
                         return jsonify({"status": "stale_message"}), 200
@@ -5038,8 +5073,9 @@ def webhook(event_type=None):
 def list_moderation():
     """Lista todos os números com restrição ativa (mute ou bloqueio)."""
     admin_key = os.getenv("ADMIN_KEY", "")
-    provided_key = request.headers.get("X-Admin-Key") or request.args.get("key")
-    if not admin_key or provided_key != admin_key:
+    # Só header: chave na query string fica gravada em logs de proxy/acesso.
+    provided_key = request.headers.get("X-Admin-Key") or ""
+    if not admin_key or not hmac.compare_digest(provided_key, admin_key):
         return jsonify({"error": "unauthorized"}), 401
     state = load_moderation_state()
     now = datetime.utcnow()
@@ -5381,8 +5417,9 @@ def release_handoff(feedback_id):
 def debug_env():
     """Endpoint para verificar variáveis de ambiente (protegido por ADMIN_KEY)."""
     admin_key = os.getenv("ADMIN_KEY", "")
-    provided_key = request.headers.get("X-Admin-Key") or request.args.get("key")
-    if not admin_key or provided_key != admin_key:
+    # Só header: chave na query string fica gravada em logs de proxy/acesso.
+    provided_key = request.headers.get("X-Admin-Key") or ""
+    if not admin_key or not hmac.compare_digest(provided_key, admin_key):
         return jsonify({"error": "unauthorized"}), 401
     return jsonify({
         "status": "online",
@@ -5401,8 +5438,9 @@ def debug_env():
 def debug_webhook_check():
     """Verifica configuração do webhook na Evolution API."""
     admin_key = os.getenv("ADMIN_KEY", "")
-    provided_key = request.headers.get("X-Admin-Key") or request.args.get("key")
-    if not admin_key or provided_key != admin_key:
+    # Só header: chave na query string fica gravada em logs de proxy/acesso.
+    provided_key = request.headers.get("X-Admin-Key") or ""
+    if not admin_key or not hmac.compare_digest(provided_key, admin_key):
         return jsonify({"error": "unauthorized"}), 401
 
     evo_url = os.getenv("EVOLUTION_API_URL", "")
@@ -5610,7 +5648,7 @@ def api_health():
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5002))
     print(f"Prefeitura Node Data running on port {port}")
-    if supabase:
+    if get_supabase():
         print("Using Supabase database")
     else:
         print("Using local JSON files")
