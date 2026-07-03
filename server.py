@@ -165,13 +165,13 @@ EVENTS_FILE = 'execution/events.json'
 CONFIG_FILE = 'execution/config.json'
 MODERATION_FILE = 'execution/moderation_state.json'
 
-# Modelos da família gpt-5* são de raciocínio: o wrapper openai_chat_completion()
+# Modelo único para TODAS as tarefas de chat (resposta ao cidadão, classificação,
+# drafts internos). Modelos gpt-5* são de raciocínio: o wrapper openai_chat_completion()
 # compensa isso automaticamente (max_completion_tokens com folga de +600 para o
 # "pensamento", sem temperature customizada, reasoning_effort=minimal para manter
-# a latência baixa). Com esse tratamento, gpt-5.4-mini responde rápido e é o padrão.
-OPENAI_MODEL_CITIZEN_REPLY = os.getenv("OPENAI_MODEL_CITIZEN_REPLY", "gpt-5.4-mini")
-OPENAI_MODEL_CLASSIFIER = os.getenv("OPENAI_MODEL_CLASSIFIER", "gpt-5.4-mini")
-OPENAI_MODEL_INTERNAL_DRAFT = os.getenv("OPENAI_MODEL_INTERNAL_DRAFT", "gpt-5.4-mini")
+# a latência baixa). Moderação usa outra API (endpoint /moderations), por isso
+# tem variável própria; transcrição de áudio é whisper-1 (hardcoded).
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.4-mini")
 OPENAI_MODEL_MODERATION = os.getenv("OPENAI_MODEL_MODERATION", "omni-moderation-latest")
 # Esforço de raciocínio para modelos gpt-5* (reasoning). 'minimal' = resposta rápida,
 # quase sem "pensar"; suba para 'low'/'medium' se quiser mais qualidade (custo: latência/tokens).
@@ -2029,7 +2029,7 @@ Regras de categoria:
 
         response = openai_chat_completion(
             client,
-            model=OPENAI_MODEL_CLASSIFIER,
+            model=OPENAI_MODEL,
             messages=[
                 {"role": "system", "content": system_msg},
                 {"role": "user", "content": prompt}
@@ -2151,7 +2151,7 @@ TIPO DE MENSAGEM — IDENTIFIQUE E ADAPTE SUA RESPOSTA:
 
         response = openai_chat_completion(
             client,
-            model=OPENAI_MODEL_CITIZEN_REPLY,
+            model=OPENAI_MODEL,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": text}
@@ -2307,7 +2307,7 @@ Seja MUITO conciso, máximo 150 caracteres.'''
         
         response = openai_chat_completion(
             client,
-            model=OPENAI_MODEL_INTERNAL_DRAFT,
+            model=OPENAI_MODEL,
             messages=[{"role": "user", "content": prompt}],
             max_tokens=100,
             temperature=0.7,
@@ -2473,7 +2473,7 @@ Regras:
 
         response = openai_chat_completion(
             client,
-            model=OPENAI_MODEL_INTERNAL_DRAFT,
+            model=OPENAI_MODEL,
             messages=[{"role": "user", "content": prompt}],
             max_tokens=900,
             temperature=0.3,
@@ -2884,7 +2884,7 @@ Regras:
 
         response = openai_chat_completion(
             client,
-            model=OPENAI_MODEL_INTERNAL_DRAFT,
+            model=OPENAI_MODEL,
             messages=[{"role": "user", "content": prompt}],
             max_tokens=800,
             temperature=0.3,
@@ -3521,7 +3521,7 @@ Responda APENAS em JSON, sem explicação:
 
         response = openai_chat_completion(
             client,
-            model=OPENAI_MODEL_CLASSIFIER,
+            model=OPENAI_MODEL,
             messages=[{"role": "user", "content": prompt}],
             max_tokens=60,
             temperature=0,
@@ -4279,7 +4279,7 @@ Escreva a resposta da Clara agora."""
 
         resp = openai_chat_completion(
             client,
-            model=OPENAI_MODEL_CITIZEN_REPLY,
+            model=OPENAI_MODEL,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -5166,7 +5166,7 @@ REGRAS:
 
         resp = openai_chat_completion(
             client,
-            model=OPENAI_MODEL_INTERNAL_DRAFT,
+            model=OPENAI_MODEL,
             messages=[
                 {"role": "system", "content": "Você redige mensagens oficiais curtas para a Prefeitura de Ivaté-PR."},
                 {"role": "user", "content": prompt}

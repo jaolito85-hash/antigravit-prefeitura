@@ -1,8 +1,8 @@
 """Smoke-test dos modelos OpenAI configurados no .env.
 
 Chama o wrapper real openai_chat_completion() do server.py (mesmo caminho da
-produção) para cada variável de modelo de chat, e a Moderation API. Útil para
-validar uma troca de modelo ANTES do deploy.
+produção) com o modelo de chat único (OPENAI_MODEL), e a Moderation API.
+Útil para validar uma troca de modelo ANTES do deploy.
 
 Uso:
     python execution/test_openai_models.py
@@ -39,9 +39,7 @@ def main() -> int:
         return 1
 
     chat_targets = [
-        ("OPENAI_MODEL_CITIZEN_REPLY", server.OPENAI_MODEL_CITIZEN_REPLY),
-        ("OPENAI_MODEL_CLASSIFIER", server.OPENAI_MODEL_CLASSIFIER),
-        ("OPENAI_MODEL_INTERNAL_DRAFT", server.OPENAI_MODEL_INTERNAL_DRAFT),
+        ("OPENAI_MODEL", server.OPENAI_MODEL),
     ]
     failures = 0
 
