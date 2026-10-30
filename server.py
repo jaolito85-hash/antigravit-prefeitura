@@ -2068,6 +2068,22 @@ CATEGORIAS_CANONICAS = [
 ]
 
 
+def escalar_urgencia_do_chamado(urgencia_atual, urgencia_nova):
+    """Decide se uma nova mensagem no mesmo chamado sobe a urgência do card.
+
+    Só escala (Neutro < Urgente < Critico), nunca rebaixa. Positivo não escala: um
+    "obrigado" no fim da conversa não pode transformar a reclamação em elogio no
+    painel. Isso passou a acontecer sempre quando a reclamação comum virou Neutro.
+    Retorna (nova_urgencia, novo_sentiment) ou (None, None) se nada muda.
+    """
+    prioridade = {"critico": 3, "urgente": 2}
+    nova = prioridade.get(normalize_text(urgencia_nova or ''), 0)
+    atual = prioridade.get(normalize_text(urgencia_atual or ''), 0)
+    if nova > atual:
+        return urgencia_nova, "Negativo"
+    return None, None
+
+
 def canonizar_classificacao(result):
     """Padroniza a grafia do que a IA devolveu.
 
@@ -4959,13 +4975,9 @@ def webhook(event_type=None):
                         if (not current_region or current_region == 'N/A') and (new_region and new_region != 'N/A'):
                             update_region = new_region
                         
-                        current_urgency = active_feedback.get('urgency', 'Neutro')
-                        update_urgency = None
-                        update_sentiment = None
-                        priority_map = {"Critico": 3, "Urgente": 2, "Positivo": 1, "Neutro": 0}
-                        if priority_map.get(sentimento, 0) > priority_map.get(current_urgency, 0):
-                            update_urgency = sentimento
-                            update_sentiment = "Positivo" if sentimento == "Positivo" else ("Negativo" if sentimento in ["Critico", "Urgente"] else "Neutro")
+                        update_urgency, update_sentiment = escalar_urgencia_do_chamado(
+                            active_feedback.get('urgency', 'Neutro'), sentimento
+                        )
                         
                         # Verifica se o endereço ainda está faltando para este chamado
                         current_loc_status = active_feedback.get('location_status', 'pendente')

@@ -180,5 +180,25 @@ class CanonizarClassificacaoTest(unittest.TestCase):
         self.assertIsNone(server.canonizar_classificacao(None))
 
 
+class EscalarUrgenciaTest(unittest.TestCase):
+    def test_obrigado_nao_vira_reclamacao_em_elogio(self):
+        # Caso real (card de teste 40): buraco Neutro + "Obrigado" virou Positivo.
+        self.assertEqual(server.escalar_urgencia_do_chamado("Neutro", "Positivo"), (None, None))
+
+    def test_escala_neutro_para_urgente_e_critico(self):
+        self.assertEqual(server.escalar_urgencia_do_chamado("Neutro", "Urgente"), ("Urgente", "Negativo"))
+        self.assertEqual(server.escalar_urgencia_do_chamado("Urgente", "Critico"), ("Critico", "Negativo"))
+
+    def test_nunca_rebaixa(self):
+        self.assertEqual(server.escalar_urgencia_do_chamado("Critico", "Urgente"), (None, None))
+        self.assertEqual(server.escalar_urgencia_do_chamado("Urgente", "Neutro"), (None, None))
+
+    def test_critico_com_acento_no_banco_conta_como_critico(self):
+        self.assertEqual(server.escalar_urgencia_do_chamado("Crítico", "Urgente"), (None, None))
+
+    def test_elogio_que_vira_reclamacao_grave_escala(self):
+        self.assertEqual(server.escalar_urgencia_do_chamado("Positivo", "Urgente"), ("Urgente", "Negativo"))
+
+
 if __name__ == "__main__":
     unittest.main()
