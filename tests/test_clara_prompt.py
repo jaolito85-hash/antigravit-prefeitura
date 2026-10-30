@@ -200,5 +200,25 @@ class EscalarUrgenciaTest(unittest.TestCase):
         self.assertEqual(server.escalar_urgencia_do_chamado("Positivo", "Urgente"), ("Urgente", "Negativo"))
 
 
+class AgradecimentoTest(unittest.TestCase):
+    def test_agradecimentos_puros_recebem_imagina(self):
+        for texto in ["Obrigado", "obrigada!", "Valeu", "vlw", "Muito obrigado 🙏",
+                      "ok, obrigada", "Obrigado Clara", "obrigado pela atenção",
+                      "Agradeço", "obg", "Tá bom, obrigado!"]:
+            with self.subTest(texto=texto):
+                self.assertTrue(server.is_agradecimento(texto))
+
+    def test_agradecimento_com_relato_segue_fluxo_normal(self):
+        for texto in ["obrigado mas o buraco continua lá",
+                      "obrigada, ainda não arrumaram a lâmpada",
+                      "valeu, tem outro poste apagado na rua de cima",
+                      "", None]:
+            with self.subTest(texto=texto):
+                self.assertFalse(server.is_agradecimento(texto))
+
+    def test_resposta_e_imagina_com_coracao_azul(self):
+        self.assertEqual(server.RESPOSTA_AGRADECIMENTO, "Imagina! 💙")
+
+
 if __name__ == "__main__":
     unittest.main()

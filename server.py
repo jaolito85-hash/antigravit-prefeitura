@@ -3196,6 +3196,35 @@ SAUDACAO_COMPLEMENTOS = {
     'obrigado', 'obrigada', 'valeu', 'brigado', 'brigada',
 }
 
+# Agradecimento puro ("obrigado", "valeu, Clara", "ok muito obrigada"). Responde
+# fixo, sem IA: pela IA saía "Que bom! 💙 Obrigada por falar com a gente...", que
+# soa estranho como resposta a um obrigado, e ainda gastava uma classificação.
+RESPOSTA_AGRADECIMENTO = "Imagina! 💙"
+_AGRADECIMENTO_PALAVRAS = {
+    'obrigado', 'obrigada', 'obrigadao', 'obrigadinho', 'obrigadinha', 'obg', 'obgd',
+    'brigado', 'brigada', 'valeu', 'vlw', 'agradeco', 'grato', 'grata',
+}
+# Palavras que podem acompanhar o agradecimento sem mudar o sentido. Qualquer
+# outra palavra ("mas", "nao", "ainda") faz a mensagem seguir o fluxo normal.
+_AGRADECIMENTO_COMPLEMENTOS = {
+    'muito', 'mt', 'mto', 'ok', 'ta', 'bom', 'beleza', 'blz', 'certo', 'entendi',
+    'show', 'sim', 'clara', 'viu', 'pela', 'pelo', 'atencao', 'ajuda', 'retorno',
+    'demais', 'de', 'coracao', 'mesmo', 'entao', 'ai', 'e', 'a', 'voce', 'vc',
+}
+
+
+def is_agradecimento(text: str) -> bool:
+    """True se a mensagem é só um agradecimento, sem relato junto."""
+    if not text:
+        return False
+    palavras = re.sub(r"[^a-z0-9 ]", " ", normalize_text(text)).split()
+    if not palavras or len(palavras) > 6:
+        return False
+    if not any(p in _AGRADECIMENTO_PALAVRAS for p in palavras):
+        return False
+    return all(p in _AGRADECIMENTO_PALAVRAS or p in _AGRADECIMENTO_COMPLEMENTOS for p in palavras)
+
+
 RESPOSTA_SAUDACAO = (
     "Olá! 👋 Sou a *Clara*, assistente virtual do programa *Voz Ativa* da Prefeitura de Ivaté.\n\n"
     "Você pode me enviar:\n"
@@ -4921,6 +4950,18 @@ def webhook(event_type=None):
                         current_message = append_conversation_entry(active_feedback['message'], 'client', text)
                         record_agent_reply(active_feedback['id'], current_message, reply)
                         return jsonify({"status": "updated_existing_location"}), 200
+
+                # --- AGRADECIMENTO PURO ---
+                # Fica depois do fluxo de endereço (lá um "obrigado" ainda recebe o
+                # lembrete de rua/bairro) e antes da classificação, para não gastar IA
+                # nem mexer na urgência do card.
+                if is_agradecimento(text):
+                    send_whatsapp_message(remote_jid, RESPOSTA_AGRADECIMENTO)
+                    if active_feedback:
+                        append_to_feedback(active_feedback['id'], active_feedback['message'], text)
+                        current_message = append_conversation_entry(active_feedback['message'], 'client', text)
+                        record_agent_reply(active_feedback['id'], current_message, RESPOSTA_AGRADECIMENTO)
+                    return jsonify({"status": "thanks_replied"}), 200
 
                 # --- CLASSIFY FIRST (needed for smart threading) ---
                 print(f"Processing Report from {mascarar_telefone(remote_jid)}")
